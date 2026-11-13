@@ -1,0 +1,307 @@
+/** @import { AppCommand, AppState, Project, StoreEffect } from '../../types.d.ts' */
+
+import { closeDialogById, confirmAction, notify, openDialogById } from './app-shell.js';
+
+/**
+ * Open the Covenant modal to create or edit a project.
+ * @param {{
+ *   store: {
+ *     getState: () => AppState;
+ *     dispatch: (cmd: AppCommand) => { state: AppState; effects: StoreEffect[] };
+ *   };
+ *   project?: Project;
+ * }} opts
+ */
+export function openProjectModal({ store, project }) {
+  const modal = /** @type {HTMLDialogElement | null} */ (document.getElementById('modal-project'));
+  const titleEl = document.getElementById('modal-project-title');
+  const bodyEl = document.getElementById('modal-project-body');
+  const footerEl = document.getElementById('modal-project-footer');
+  if (!modal || !titleEl || !bodyEl || !footerEl) return;
+
+  const isEdit = Boolean(project);
+  titleEl.textContent = isEdit ? 'Modifier le projet' : 'Nouveau projet';
+
+  const form = document.createElement('form');
+  form.id = 'form-project';
+  form.noValidate = true;
+
+  const nameField = document.createElement('div');
+  nameField.className = 'cv-field';
+  const nameLabel = document.createElement('label');
+  nameLabel.className = 'cv-label';
+  nameLabel.htmlFor = 'project-name-input';
+  nameLabel.textContent = 'Nom du projet';
+  const reqStar = document.createElement('span');
+  reqStar.className = 'cv-required';
+  reqStar.setAttribute('aria-hidden', 'true');
+  reqStar.textContent = '*';
+  nameLabel.append(reqStar);
+
+  const nameInput = document.createElement('input');
+  nameInput.id = 'project-name-input';
+  nameInput.type = 'text';
+  nameInput.className = 'cv-input';
+  nameInput.required = true;
+  nameInput.maxLength = 120;
+  nameInput.autofocus = true;
+  nameInput.value = project?.name ?? '';
+
+  const nameError = document.createElement('span');
+  nameError.id = 'project-name-error';
+  nameError.className = 'cv-error';
+  nameError.hidden = true;
+  const errIcon = document.createElement('i');
+  errIcon.className = 'ph ph-warning-circle cv-icon';
+  errIcon.setAttribute('aria-hidden', 'true');
+  const errText = document.createElement('span');
+  errText.textContent = 'Saisissez un nom de projet non vide.';
+  nameError.append(errIcon, errText);
+
+  nameField.append(nameLabel, nameInput, nameError);
+
+  const descField = document.createElement('div');
+  descField.className = 'cv-field';
+  const descLabel = document.createElement('label');
+  descLabel.className = 'cv-label';
+  descLabel.htmlFor = 'project-desc-input';
+  descLabel.textContent = 'Description';
+  const descInput = document.createElement('textarea');
+  descInput.id = 'project-desc-input';
+  descInput.className = 'cv-input';
+  descInput.rows = 3;
+  descInput.maxLength = 1000;
+  descInput.value = project?.description ?? '';
+  descField.append(descLabel, descInput);
+
+  form.append(nameField, descField);
+  form.style.display = 'flex';
+  form.style.flexDirection = 'column';
+  form.style.gap = 'var(--cv-space-4)';
+
+  bodyEl.replaceChildren(form);
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'cv-btn';
+  cancelBtn.setAttribute('data-cv-close', '');
+  cancelBtn.textContent = 'Annuler';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'submit';
+  saveBtn.setAttribute('form', 'form-project');
+  saveBtn.className = 'cv-btn cv-btn--primary';
+  saveBtn.textContent = isEdit ? 'Enregistrer' : 'Créer le projet';
+
+  footerEl.replaceChildren(cancelBtn, saveBtn);
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const cleanName = nameInput.value.trim();
+    if (!cleanName) {
+      nameInput.setAttribute('aria-invalid', 'true');
+      nameInput.setAttribute('aria-describedby', 'project-name-error');
+      nameError.hidden = false;
+      nameInput.focus();
+      return;
+    }
+
+    const now = new Date().toISOString();
+    if (isEdit && project) {
+      store.dispatch({
+        type: 'update_project',
+        id: project.id,
+        name: cleanName,
+        description: descInput.value,
+        now,
+      });
+      notify({ status: 'success', title: 'Projet mis à jour', text: cleanName });
+    } else {
+      store.dispatch({
+        type: 'create_project',
+        id: crypto.randomUUID(),
+        name: cleanName,
+        description: descInput.value,
+        now,
+      });
+      notify({ status: 'success', title: 'Projet créé', text: cleanName });
+    }
+    closeDialogById('modal-project');
+  });
+
+  const onClose = () => {
+    modal.returnValue = '';
+    modal.removeEventListener('close', onClose);
+  };
+  modal.addEventListener('close', onClose);
+
+  openDialogById('modal-project');
+  nameInput.focus();
+}
+
+/**
+ * Render the Projects view inside #app-view.
+ * @param {{
+ *   container: HTMLElement;
+ *   store: {
+ *     getState: () => AppState;
+ *     dispatch: (cmd: AppCommand) => { state: AppState; effects: StoreEffect[] };
+ *   };
+ * }} opts
+ */
+export function renderProjectsView({ container, store }) {
+  const state = store.getState();
+
+  const header = document.createElement('div');
+  header.className = 'lc-view-header';
+
+  const heading = document.createElement('h2');
+  heading.className = 'cv-h2';
+  heading.style.margin = '0';
+  heading.textContent = 'Vos projets';
+
+  const newBtn = document.createElement('button');
+  newBtn.type = 'button';
+  newBtn.className = 'cv-btn cv-btn--primary';
+  newBtn.id = 'btn-new-project';
+  newBtn.disabled = state.readOnly;
+  const plusIcon = document.createElement('i');
+  plusIcon.className = 'ph ph-plus cv-icon';
+  plusIcon.setAttribute('aria-hidden', 'true');
+  newBtn.append(plusIcon, document.createTextNode(' Nouveau projet'));
+  newBtn.addEventListener('click', () => openProjectModal({ store }));
+
+  header.append(heading, newBtn);
+
+  if (state.projects.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'cv-empty';
+    const iconBox = document.createElement('span');
+    iconBox.className = 'cv-empty__icon';
+    const ic = document.createElement('i');
+    ic.className = 'ph ph-folder-open cv-icon';
+    ic.setAttribute('aria-hidden', 'true');
+    iconBox.append(ic);
+
+    const title = document.createElement('p');
+    title.className = 'cv-empty__title';
+    title.textContent = 'Aucun projet pour le moment';
+
+    const desc = document.createElement('p');
+    desc.textContent = 'Créez un projet pour organiser vos tâches et vos notes.';
+
+    const cta = document.createElement('button');
+    cta.type = 'button';
+    cta.className = 'cv-btn cv-btn--primary';
+    cta.disabled = state.readOnly;
+    cta.textContent = 'Créer un projet';
+    cta.addEventListener('click', () => openProjectModal({ store }));
+
+    empty.append(iconBox, title, desc, cta);
+    container.replaceChildren(header, empty);
+    return;
+  }
+
+  const grid = document.createElement('div');
+  grid.className = 'lc-projects-grid';
+
+  for (const project of state.projects) {
+    const card = document.createElement('article');
+    card.className = 'cv-card';
+
+    const cardHead = document.createElement('div');
+    cardHead.className = 'lc-project-card__head';
+
+    const title = document.createElement('h3');
+    title.className = 'cv-card__title';
+    title.textContent = project.name;
+
+    const badge = document.createElement('span');
+    badge.className = project.archived ? 'cv-badge' : 'cv-badge cv-badge--accent';
+    const dot = document.createElement('span');
+    dot.className = 'cv-badge__dot';
+    badge.append(dot, document.createTextNode(project.archived ? 'Archivé' : 'Actif'));
+
+    cardHead.append(title, badge);
+
+    const desc = document.createElement('p');
+    desc.className = 'lc-project-card__desc';
+    desc.textContent = project.description || 'Aucune description.';
+
+    const taskCount = state.tasks.filter((t) => t.projectId === project.id).length;
+    const noteCount = state.notes.filter((n) => n.projectId === project.id).length;
+    const meta = document.createElement('div');
+    meta.className = 'cv-card__meta cv-num';
+    meta.textContent = `${taskCount} tâche${taskCount > 1 ? 's' : ''} · ${noteCount} note${noteCount > 1 ? 's' : ''}`;
+
+    const footer = document.createElement('div');
+    footer.className = 'cv-card__footer';
+    footer.style.flexWrap = 'wrap';
+    footer.style.gap = 'var(--cv-space-2)';
+
+    const openTasksBtn = document.createElement('button');
+    openTasksBtn.type = 'button';
+    openTasksBtn.className = 'cv-btn cv-btn--sm';
+    openTasksBtn.textContent = 'Ouvrir les tâches';
+    openTasksBtn.setAttribute('aria-label', `Ouvrir les tâches de ${project.name}`);
+    openTasksBtn.addEventListener('click', () => {
+      store.dispatch({ type: 'select_project', projectId: project.id });
+      store.dispatch({ type: 'set_view', view: 'tasks' });
+    });
+
+    const actionsGroup = document.createElement('div');
+    actionsGroup.className = 'lc-table-actions';
+
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'cv-btn cv-btn--ghost cv-btn--sm';
+    editBtn.disabled = state.readOnly;
+    editBtn.textContent = 'Modifier';
+    editBtn.setAttribute('aria-label', `Modifier ${project.name}`);
+    editBtn.addEventListener('click', () => openProjectModal({ store, project }));
+
+    const archiveBtn = document.createElement('button');
+    archiveBtn.type = 'button';
+    archiveBtn.className = 'cv-btn cv-btn--ghost cv-btn--sm';
+    archiveBtn.disabled = state.readOnly;
+    archiveBtn.textContent = project.archived ? 'Désarchiver' : 'Archiver';
+    archiveBtn.setAttribute(
+      'aria-label',
+      `${project.archived ? 'Désarchiver' : 'Archiver'} ${project.name}`,
+    );
+    archiveBtn.addEventListener('click', () => {
+      store.dispatch({
+        type: 'toggle_archive_project',
+        id: project.id,
+        archived: !project.archived,
+        now: new Date().toISOString(),
+      });
+    });
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'cv-btn cv-btn--ghost cv-btn--sm';
+    deleteBtn.disabled = state.readOnly;
+    deleteBtn.textContent = 'Supprimer';
+    deleteBtn.setAttribute('aria-label', `Supprimer ${project.name}`);
+    deleteBtn.addEventListener('click', async () => {
+      const confirmed = await confirmAction({
+        title: `Supprimer « ${project.name} » ?`,
+        message: `Ce projet et ses ${taskCount} tâche(s) seront supprimés. Les notes associées resteront accessibles sans projet.`,
+        confirmLabel: 'Supprimer le projet',
+        danger: true,
+      });
+      if (!confirmed) return;
+      store.dispatch({ type: 'delete_project', id: project.id });
+      notify({ status: 'info', title: 'Projet supprimé', text: project.name });
+    });
+
+    actionsGroup.append(editBtn, archiveBtn, deleteBtn);
+    footer.append(openTasksBtn, actionsGroup);
+
+    card.append(cardHead, desc, meta, footer);
+    grid.append(card);
+  }
+
+  container.replaceChildren(header, grid);
+}

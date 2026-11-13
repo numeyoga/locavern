@@ -1,0 +1,18 @@
+{
+  "name": "Locavern",
+  "short_name": "Locavern",
+  "description": "Productivité personnelle local-first : projets, tâches, Kanban et notes enrichies.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#fafafa",
+  "theme_color": "#c2410c",
+  "lang": "fr",
+  "icons": [
+    {
+      "src": "./vendor/covenant/logos/covenant-mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
