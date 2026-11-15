@@ -1,7 +1,12 @@
-/** @import { AppCommand, AppState, Note, RichTextDoc, StoreEffect } from '../../types.d.ts' */
+/** @import { AppCommand, AppState, LocalRef, Note, RichTextDoc, StoreEffect } from '../../types.d.ts' */
 
 import { EMPTY_RICH_DOC, collectDocAssetIds } from '../../core/model.js';
+import { selectAllTags, selectOrphanedAssetIds, selectTemplates } from '../../core/store.js';
+import { instantiateNoteTemplate } from '../../core/templates.js';
+import { createTemplatePicker } from './template-picker.js';
 import { mountRichTextEditor } from '../rich-text-tiptap.js';
+import { createLinkEditor } from './link-editor.js';
+import { createTagEditor } from './tag-editor.js';
 import {
   applyDialogPresentation,
   closeDialogById,
@@ -22,6 +27,7 @@ import {
  *   resolveAssetUrl: (assetId: string) => Promise<string | null>;
  *   uploadLocalImage: (file: File) => Promise<{ assetId: string; alt: string } | null>;
  *   onAfterCreate?: (noteId: string) => void;
+ *   onNavigateLocalRef?: (ref: LocalRef) => void;
  * }} opts
  */
 export function openNoteDialog({
@@ -31,6 +37,7 @@ export function openNoteDialog({
   resolveAssetUrl,
   uploadLocalImage,
   onAfterCreate,
+  onNavigateLocalRef,
 }) {
   const dialog = /** @type {HTMLDialogElement | null} */ (document.getElementById('dialog-note'));
   const titleEl = document.getElementById('dialog-note-title');
@@ -113,6 +120,27 @@ export function openNoteDialog({
   projectSelectWrap.append(projectSelect);
   projectField.append(projectLabel, projectSelectWrap);
 
+  const tagEditor = createTagEditor({
+    idPrefix: 'note-dialog-tags',
+    labelText: 'Étiquettes',
+    initialTags: note?.tags ?? [],
+    suggestions: selectAllTags(state),
+    readOnly,
+  });
+
+  const linkEditor = createLinkEditor({
+    idPrefix: 'note-dialog-links',
+    state,
+    currentRef: note ? { kind: 'note', id: note.id } : null,
+    initialLinks: note?.links ?? [],
+    readOnly,
+    onNavigate(ref) {
+      closeDialogById('dialog-note');
+      onClose();
+      onNavigateLocalRef?.(ref);
+    },
+  });
+
   const contentField = document.createElement('div');
   contentField.className = 'cv-field';
   const contentLabel = document.createElement('span');
@@ -122,6 +150,15 @@ export function openNoteDialog({
   const editorHost = document.createElement('div');
   contentField.append(contentLabel, editorHost);
 
+  /** @type {Set<string>} */
+  const stagedAssetIds = new Set();
+  /** @param {File} file */
+  async function handleUploadImage(file) {
+    const res = await uploadLocalImage(file);
+    if (res) stagedAssetIds.add(res.assetId);
+    return res;
+  }
+
   /** @type {RichTextDoc} */
   const initialDoc = note?.contentDoc ?? EMPTY_RICH_DOC;
   const editorHandle = mountRichTextEditor({
@@ -130,7 +167,7 @@ export function openNoteDialog({
     editable: !readOnly,
     ariaLabel: 'Contenu de la note',
     resolveAssetUrl,
-    onUploadImage: uploadLocalImage,
+    onUploadImage: handleUploadImage,
     onBlockedRemoteImage: () => {
       notify({
         status: 'warning',
@@ -148,7 +185,45 @@ export function openNoteDialog({
     onChange() {},
   });
 
-  form.append(titleField, projectField, contentField);
+  const noteDialogTemplatePicker = createTemplatePicker({
+    idPrefix: 'note-dialog-tpl',
+    labelText: 'Modèles de trame',
+    templates: selectTemplates(state, 'note'),
+    readOnly,
+    showSave: true,
+    onApply(tpl) {
+      editorHandle.setDoc(instantiateNoteTemplate(tpl));
+      notify({ status: 'success', title: 'Trame appliquée', text: tpl.name });
+    },
+    onSaveNew(name) {
+      const id = crypto.randomUUID();
+      store.dispatch({
+        type: 'create_template',
+        id,
+        kind: 'note',
+        name,
+        contentDoc: editorHandle.getDoc(),
+        now: new Date().toISOString(),
+      });
+      noteDialogTemplatePicker.setTemplates(selectTemplates(store.getState(), 'note'), id);
+      notify({ status: 'success', title: 'Modèle de note enregistré', text: name });
+      return id;
+    },
+    onDeleteCustom(tpl) {
+      store.dispatch({ type: 'delete_template', id: tpl.id });
+      noteDialogTemplatePicker.setTemplates(selectTemplates(store.getState(), 'note'));
+      notify({ status: 'info', title: 'Modèle supprimé', text: tpl.name });
+    },
+  });
+
+  form.append(
+    titleField,
+    projectField,
+    tagEditor.element,
+    linkEditor.element,
+    noteDialogTemplatePicker.element,
+    contentField,
+  );
   bodyEl.replaceChildren(form);
 
   const cancelBtn = document.createElement('button');
@@ -176,13 +251,18 @@ export function openNoteDialog({
       closeDialogById('dialog-note');
       const confirmed = await confirmAction({
         title: `Supprimer « ${note.title} » ?`,
-        message: 'Cette note sera définitivement supprimée.',
+        message: 'Cette note sera déplacée dans la corbeille locale.',
         confirmLabel: 'Supprimer la note',
         danger: true,
       });
       if (confirmed) {
-        store.dispatch({ type: 'delete_note', id: note.id });
-        notify({ status: 'info', title: 'Note supprimée', text: note.title });
+        store.dispatch({
+          type: 'trash_note',
+          id: note.id,
+          trashId: crypto.randomUUID(),
+          now: new Date().toISOString(),
+        });
+        notify({ status: 'info', title: 'Note placée dans la corbeille', text: note.title });
       }
     });
     footerButtons.push(deleteBtn);
@@ -206,6 +286,8 @@ export function openNoteDialog({
     titleInput.removeAttribute('aria-describedby');
     titleError.hidden = true;
 
+    const tags = tagEditor.commitPending();
+    const links = linkEditor.getLinks();
     const doc = editorHandle.getDoc();
     const assetIds = collectDocAssetIds(doc);
     const projectId = projectSelect.value ? projectSelect.value : null;
@@ -219,6 +301,8 @@ export function openNoteDialog({
           title: cleanTitle,
           projectId,
           contentDoc: doc,
+          tags,
+          links,
           assetIds,
         },
         now,
@@ -232,6 +316,8 @@ export function openNoteDialog({
         projectId,
         title: cleanTitle,
         contentDoc: doc,
+        tags,
+        links,
         assetIds,
         now,
       });
@@ -239,11 +325,27 @@ export function openNoteDialog({
       onAfterCreate?.(id);
     }
 
+    const orphanedStaged = selectOrphanedAssetIds(store.getState(), stagedAssetIds);
+    for (const id of orphanedStaged) {
+      store.dispatch({ type: 'delete_asset', id });
+    }
+    stagedAssetIds.clear();
     closeDialogById('dialog-note');
+    onClose();
   });
 
+  let closed = false;
   const onClose = () => {
+    if (closed) return;
+    closed = true;
     dialog.returnValue = '';
+    if (stagedAssetIds.size > 0 && !store.getState().readOnly) {
+      const orphanedStaged = selectOrphanedAssetIds(store.getState(), stagedAssetIds);
+      for (const id of orphanedStaged) {
+        store.dispatch({ type: 'delete_asset', id });
+      }
+      stagedAssetIds.clear();
+    }
     editorHandle.destroy();
     bodyEl.replaceChildren();
     footerEl.replaceChildren();

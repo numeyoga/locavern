@@ -3,6 +3,7 @@ import {
   DEFAULT_TASK_STATUSES,
   DEFAULT_WHITEBOARD_VIEWPORT,
   EMPTY_RICH_DOC,
+  TASK_RECURRENCES,
   collectDocAssetIds,
   collectWhiteboardAssetIds,
   createNote,
@@ -10,8 +11,10 @@ import {
   createTask,
   createTaskStatusId,
   createWhiteboard,
+  getTaskRecurrenceLabel,
   getTaskStatusMeta,
   getWhiteboardElementLayerBounds,
+  normalizeTaskRecurrence,
   normalizeTaskStatuses,
   sanitizeRichTextDoc,
   stepWhiteboardElementLayer,
@@ -55,8 +58,42 @@ describe('model', () => {
     expect(task.status).toBe('todo');
     expect(task.priority).toBe('medium');
     expect(task.dueDate).toBeNull();
+    expect(task.recurrence).toBeUndefined();
     expect(task.descriptionDoc).toEqual(EMPTY_RICH_DOC);
     expect(task.checklist).toEqual([]);
+  });
+
+  it('normalise la récurrence des tâches et fournit son libellé', () => {
+    expect(TASK_RECURRENCES).toEqual(['daily', 'weekly', 'monthly']);
+    expect(normalizeTaskRecurrence('daily')).toBe('daily');
+    expect(normalizeTaskRecurrence('weekly')).toBe('weekly');
+    expect(normalizeTaskRecurrence('monthly')).toBe('monthly');
+    expect(normalizeTaskRecurrence('')).toBeNull();
+    expect(normalizeTaskRecurrence('yearly')).toBeNull();
+    expect(normalizeTaskRecurrence(null)).toBeNull();
+
+    expect(getTaskRecurrenceLabel('daily')).toBe('Quotidienne');
+    expect(getTaskRecurrenceLabel('weekly')).toBe('Hebdomadaire');
+    expect(getTaskRecurrenceLabel('monthly')).toBe('Mensuelle');
+
+    const recurring = createTask({
+      id: 't-rec',
+      projectId: 'p1',
+      title: 'Sauvegarde',
+      recurrence: 'weekly',
+      now: NOW,
+    });
+    expect(recurring.recurrence).toBe('weekly');
+
+    const nonRecurring = createTask({
+      id: 't-norec',
+      projectId: 'p1',
+      title: 'Ponctuelle',
+      // @ts-expect-error Vérifie l’assainissement d’une récurrence invalide
+      recurrence: 'unknown',
+      now: NOW,
+    });
+    expect(nonRecurring.recurrence).toBeUndefined();
   });
 
   it('rejette une tâche avec un statut invalide ou un titre vide', () => {

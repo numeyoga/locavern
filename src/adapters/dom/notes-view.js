@@ -1,9 +1,21 @@
-/** @import { AppCommand, AppState, Note, RichTextDoc, StoreEffect } from '../../types.d.ts' */
+/** @import { AppCommand, AppState, LocalRef, Note, RichTextDoc, StoreEffect } from '../../types.d.ts' */
 
 import { collectDocAssetIds } from '../../core/model.js';
-import { selectNotes, selectProjectById } from '../../core/store.js';
+import { noteToMarkdown } from '../../core/markdown.js';
+import { extractRichTextPlainText } from '../../core/search.js';
+import {
+  selectAllTags,
+  selectNotes,
+  selectProjectById,
+  selectTemplates,
+} from '../../core/store.js';
+import { instantiateNoteTemplate } from '../../core/templates.js';
+import { createTemplatePicker } from './template-picker.js';
+import { saveArchiveBlob } from '../archive-file.js';
 import { mountRichTextEditor } from '../rich-text-tiptap.js';
 import { confirmAction, notify } from './app-shell.js';
+import { createLinkEditor } from './link-editor.js';
+import { createTagEditor } from './tag-editor.js';
 
 /**
  * Render the standalone Notes view with Tiptap rich text and local images.
@@ -17,10 +29,12 @@ import { confirmAction, notify } from './app-shell.js';
  *   filters: {
  *     projectId: string | null | 'all';
  *     query: string;
+ *     tag: string | 'all';
  *   };
  *   resolveAssetUrl: (assetId: string) => Promise<string | null>;
  *   uploadLocalImage: (file: File) => Promise<{ assetId: string; alt: string } | null>;
  *   onOpenNoteDialog?: (opts?: { note?: Note; defaultProjectId?: string | null }) => void;
+ *   onNavigateLocalRef?: (ref: LocalRef) => void;
  * }} opts
  * @returns {{ flushAndDestroy: () => void; isDispatchingInline: () => boolean }}
  */
@@ -31,6 +45,7 @@ export function renderNotesView({
   resolveAssetUrl,
   uploadLocalImage,
   onOpenNoteDialog,
+  onNavigateLocalRef,
 }) {
   const initialState = store.getState();
 
@@ -72,12 +87,42 @@ export function renderNotesView({
   searchInput.id = 'notes-search-input';
   searchInput.type = 'search';
   searchInput.className = 'cv-input';
-  searchInput.placeholder = 'Rechercher une note';
+  searchInput.placeholder = 'Rechercher titre ou contenu';
   searchInput.setAttribute('aria-label', 'Rechercher une note');
   searchInput.value = filters.query;
   searchGroup.append(searchIcon, searchInput);
 
-  leftGroup.append(projectWrap, searchGroup);
+  const tagWrap = document.createElement('div');
+  tagWrap.className = 'cv-select';
+  const tagFilter = document.createElement('select');
+  tagFilter.id = 'notes-tag-filter';
+  tagFilter.className = 'cv-input';
+  tagFilter.setAttribute('aria-label', 'Filtrer les notes par étiquette');
+  function rebuildNotesTagOptions() {
+    const allTags = selectAllTags(store.getState());
+    tagFilter.replaceChildren();
+    const allTagOpt = document.createElement('option');
+    allTagOpt.value = 'all';
+    allTagOpt.textContent = 'Toutes les étiquettes';
+    tagFilter.append(allTagOpt);
+    for (const tag of allTags) {
+      const opt = document.createElement('option');
+      opt.value = tag;
+      opt.textContent = `#${tag}`;
+      tagFilter.append(opt);
+    }
+    if (
+      filters.tag !== 'all' &&
+      !allTags.some((t) => t.toLowerCase() === filters.tag.toLowerCase())
+    ) {
+      filters.tag = 'all';
+    }
+    tagFilter.value = filters.tag;
+  }
+  rebuildNotesTagOptions();
+  tagWrap.append(tagFilter);
+
+  leftGroup.append(projectWrap, tagWrap, searchGroup);
 
   const newNoteBtn = document.createElement('button');
   newNoteBtn.type = 'button';
@@ -184,9 +229,11 @@ export function renderNotesView({
       const mSpan = document.createElement('span');
       mSpan.className = 'lc-note-item__meta';
       const projName = note.projectId ? selectProjectById(state, note.projectId)?.name : null;
+      const tagsSummary =
+        (note.tags ?? []).length > 0 ? ` · ${(note.tags ?? []).map((t) => `#${t}`).join(' ')}` : '';
       mSpan.textContent = projName
-        ? `${projName} · ${note.updatedAt.slice(0, 10)}`
-        : note.updatedAt.slice(0, 10);
+        ? `${projName} · ${note.updatedAt.slice(0, 10)}${tagsSummary}`
+        : `${note.updatedAt.slice(0, 10)}${tagsSummary}`;
 
       itemBtn.append(tSpan, mSpan);
       itemBtn.addEventListener('click', () => {
@@ -250,6 +297,33 @@ export function renderNotesView({
 
       metaRow.append(titleField, projField);
 
+      const tagEditor = createTagEditor({
+        idPrefix: 'note-tags',
+        labelText: 'Étiquettes',
+        initialTags: currentNote.tags ?? [],
+        suggestions: selectAllTags(state),
+        readOnly,
+        onChange() {
+          saveNow(false);
+          rebuildNotesTagOptions();
+        },
+      });
+
+      const linkEditor = createLinkEditor({
+        idPrefix: 'note-links',
+        state,
+        currentRef: { kind: 'note', id: currentNote.id },
+        initialLinks: currentNote.links ?? [],
+        readOnly,
+        onChange() {
+          saveNow(false);
+        },
+        onNavigate(ref) {
+          flushPending?.();
+          onNavigateLocalRef?.(ref);
+        },
+      });
+
       const editorHost = document.createElement('div');
       /** @type {RichTextDoc} */
       let latestDoc = currentNote.contentDoc;
@@ -267,6 +341,8 @@ export function renderNotesView({
           saveTimer = null;
         }
         const cleanTitle = titleInput.value.trim() || currentNote.title;
+        const tags = tagEditor.commitPending();
+        const links = linkEditor.getLinks();
         const doc = editorHandle ? editorHandle.getDoc() : latestDoc;
         const assetIds = collectDocAssetIds(doc);
         const projectId = projSelect.value ? projSelect.value : null;
@@ -283,6 +359,8 @@ export function renderNotesView({
               title: cleanTitle,
               projectId,
               contentDoc: doc,
+              tags,
+              links,
               assetIds,
             },
             now: new Date().toISOString(),
@@ -351,6 +429,85 @@ export function renderNotesView({
       actions.className = 'lc-table-actions';
       actions.style.flexWrap = 'wrap';
 
+      const duplicateBtn = document.createElement('button');
+      duplicateBtn.type = 'button';
+      duplicateBtn.id = 'btn-duplicate-note';
+      duplicateBtn.className = 'cv-btn cv-btn--sm';
+      duplicateBtn.disabled = readOnly;
+      const dupIc = document.createElement('i');
+      dupIc.className = 'ph ph-copy cv-icon';
+      dupIc.setAttribute('aria-hidden', 'true');
+      duplicateBtn.append(dupIc, document.createTextNode(' Dupliquer'));
+      duplicateBtn.setAttribute('aria-label', `Dupliquer la note « ${currentNote.title} »`);
+      duplicateBtn.addEventListener('click', () => {
+        if (readOnly) return;
+        flushPending?.();
+        const fresh = store.getState().notes.find((n) => n.id === currentNote.id) ?? currentNote;
+        const copyId = crypto.randomUUID();
+        const copyTitle = `${fresh.title} (copie)`.slice(0, 200);
+        const clonedDoc = /** @type {RichTextDoc} */ (structuredClone(fresh.contentDoc));
+        const clonedAssetIds = [...fresh.assetIds];
+        const now = new Date().toISOString();
+        store.dispatch({
+          type: 'create_note',
+          id: copyId,
+          projectId: fresh.projectId,
+          title: copyTitle,
+          contentDoc: clonedDoc,
+          tags: [...(fresh.tags ?? [])],
+          assetIds: clonedAssetIds,
+          now,
+        });
+        store.dispatch({ type: 'select_note', noteId: copyId });
+        notify({ status: 'success', title: 'Note dupliquée', text: copyTitle });
+      });
+
+      const exportMdBtn = document.createElement('button');
+      exportMdBtn.type = 'button';
+      exportMdBtn.id = 'btn-export-note-md';
+      exportMdBtn.className = 'cv-btn cv-btn--sm';
+      const exportIc = document.createElement('i');
+      exportIc.className = 'ph ph-download-simple cv-icon';
+      exportIc.setAttribute('aria-hidden', 'true');
+      exportMdBtn.append(exportIc, document.createTextNode(' Exporter (.md)'));
+      exportMdBtn.setAttribute('aria-label', `Exporter « ${currentNote.title} » en Markdown (.md)`);
+      exportMdBtn.addEventListener('click', async () => {
+        flushPending?.();
+        const fresh = store.getState().notes.find((n) => n.id === currentNote.id) ?? currentNote;
+        const projName = fresh.projectId
+          ? (selectProjectById(store.getState(), fresh.projectId)?.name ?? null)
+          : null;
+        const md = noteToMarkdown(fresh, { projectName: projName });
+        const slug =
+          fresh.title
+            .normalize('NFD')
+            .replace(/[̀-ͯ]/g, '')
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-|-$/g, '') || 'note';
+        const filename = `${slug}.md`;
+        const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+        try {
+          const saved = await saveArchiveBlob(blob, filename, {
+            pickerTypes: [
+              {
+                description: 'Document Markdown (.md)',
+                accept: { 'text/markdown': ['.md'] },
+              },
+            ],
+          });
+          if (saved.saved) {
+            notify({ status: 'success', title: 'Note exportée en Markdown', text: filename });
+          }
+        } catch {
+          notify({
+            status: 'danger',
+            title: 'Échec de l’export Markdown',
+            text: 'Impossible d’enregistrer le fichier localement.',
+          });
+        }
+      });
+
       const openDialogBtn = document.createElement('button');
       openDialogBtn.type = 'button';
       openDialogBtn.id = 'btn-open-note-dialog';
@@ -381,7 +538,7 @@ export function renderNotesView({
       deleteBtn.addEventListener('click', async () => {
         const confirmed = await confirmAction({
           title: `Supprimer « ${currentNote.title} » ?`,
-          message: 'Cette note sera définitivement supprimée.',
+          message: 'Cette note sera déplacée dans la corbeille locale.',
           confirmLabel: 'Supprimer la note',
           danger: true,
         });
@@ -391,13 +548,72 @@ export function renderNotesView({
           saveTimer = null;
         }
         dirty = false;
-        store.dispatch({ type: 'delete_note', id: currentNote.id });
-        notify({ status: 'info', title: 'Note supprimée', text: currentNote.title });
+        store.dispatch({
+          type: 'trash_note',
+          id: currentNote.id,
+          trashId: crypto.randomUUID(),
+          now: new Date().toISOString(),
+        });
+        notify({ status: 'info', title: 'Note placée dans la corbeille', text: currentNote.title });
       });
 
-      actions.append(openDialogBtn, deleteBtn, saveBtn);
+      const noteTemplatePicker = createTemplatePicker({
+        idPrefix: 'note-tpl',
+        labelText: 'Modèles de trame',
+        templates: selectTemplates(store.getState(), 'note'),
+        readOnly,
+        showSave: true,
+        async onApply(tpl) {
+          const currentDoc = editorHandle ? editorHandle.getDoc() : latestDoc;
+          const hasContent =
+            extractRichTextPlainText(currentDoc).length > 0 ||
+            collectDocAssetIds(currentDoc).length > 0;
+          if (hasContent) {
+            const confirmed = await confirmAction({
+              title: `Appliquer la trame « ${tpl.name} » ?`,
+              message: 'Le contenu actuel de cette note sera remplacé par le modèle sélectionné.',
+              confirmLabel: 'Appliquer le modèle',
+            });
+            if (!confirmed) return;
+          }
+          const nextDoc = instantiateNoteTemplate(tpl);
+          latestDoc = nextDoc;
+          editorHandle?.setDoc(nextDoc);
+          saveNow(false);
+          notify({ status: 'success', title: 'Trame appliquée', text: tpl.name });
+        },
+        onSaveNew(name) {
+          const doc = editorHandle ? editorHandle.getDoc() : latestDoc;
+          const id = crypto.randomUUID();
+          store.dispatch({
+            type: 'create_template',
+            id,
+            kind: 'note',
+            name,
+            contentDoc: doc,
+            now: new Date().toISOString(),
+          });
+          noteTemplatePicker.setTemplates(selectTemplates(store.getState(), 'note'), id);
+          notify({ status: 'success', title: 'Modèle de note enregistré', text: name });
+          return id;
+        },
+        onDeleteCustom(tpl) {
+          store.dispatch({ type: 'delete_template', id: tpl.id });
+          noteTemplatePicker.setTemplates(selectTemplates(store.getState(), 'note'));
+          notify({ status: 'info', title: 'Modèle supprimé', text: tpl.name });
+        },
+      });
+
+      actions.append(openDialogBtn, duplicateBtn, exportMdBtn, deleteBtn, saveBtn);
       footer.append(statusNote, actions);
-      editorCard.append(metaRow, editorHost, footer);
+      editorCard.append(
+        metaRow,
+        tagEditor.element,
+        linkEditor.element,
+        editorHost,
+        footer,
+        noteTemplatePicker.element,
+      );
     }
 
     layout.append(listEl, editorCard);
@@ -412,6 +628,12 @@ export function renderNotesView({
         : projectFilter.value === 'none'
           ? null
           : projectFilter.value;
+    renderBody();
+  });
+
+  tagFilter.addEventListener('change', () => {
+    flushPending?.();
+    filters.tag = tagFilter.value;
     renderBody();
   });
 

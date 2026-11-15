@@ -1,7 +1,19 @@
-/** @import { AppCommand, AppState, ChecklistItem, RichTextDoc, StoreEffect, Task, TaskPriority, TaskStatus } from '../../types.d.ts' */
+/** @import { AppCommand, AppState, ChecklistItem, LocalRef, RichTextDoc, StoreEffect, Task, TaskPriority, TaskRecurrence, TaskStatus } from '../../types.d.ts' */
 
-import { EMPTY_RICH_DOC, collectDocAssetIds, getTaskStatusMeta } from '../../core/model.js';
+import {
+  EMPTY_RICH_DOC,
+  TASK_RECURRENCES,
+  collectDocAssetIds,
+  getTaskRecurrenceLabel,
+  getTaskStatusMeta,
+  normalizeTaskRecurrence,
+} from '../../core/model.js';
+import { selectAllTags, selectOrphanedAssetIds, selectTemplates } from '../../core/store.js';
+import { instantiateChecklistTemplate } from '../../core/templates.js';
+import { createTemplatePicker } from './template-picker.js';
 import { mountRichTextEditor } from '../rich-text-tiptap.js';
+import { createLinkEditor } from './link-editor.js';
+import { createTagEditor } from './tag-editor.js';
 import {
   applyDialogPresentation,
   closeDialogById,
@@ -20,8 +32,10 @@ import {
  *   task?: Task;
  *   defaultProjectId?: string | null;
  *   defaultStatus?: TaskStatus | null;
+ *   defaultDueDate?: string | null;
  *   resolveAssetUrl: (assetId: string) => Promise<string | null>;
  *   uploadLocalImage: (file: File) => Promise<{ assetId: string; alt: string } | null>;
+ *   onNavigateLocalRef?: (ref: LocalRef) => void;
  * }} opts
  */
 export function openTaskDrawer({
@@ -29,8 +43,10 @@ export function openTaskDrawer({
   task,
   defaultProjectId = null,
   defaultStatus,
+  defaultDueDate = null,
   resolveAssetUrl,
   uploadLocalImage,
+  onNavigateLocalRef,
 }) {
   const drawer = /** @type {HTMLDialogElement | null} */ (document.getElementById('drawer-task'));
   const titleEl = document.getElementById('drawer-task-title');
@@ -199,8 +215,60 @@ export function openTaskDrawer({
   dueInput.type = 'date';
   dueInput.className = 'cv-input';
   dueInput.disabled = readOnly;
-  dueInput.value = task?.dueDate ?? '';
+  dueInput.value = task?.dueDate ?? defaultDueDate ?? '';
   dueField.append(dueLabel, dueInput);
+
+  // Recurrence
+  const recurrenceField = document.createElement('div');
+  recurrenceField.className = 'cv-field';
+  const recurrenceLabel = document.createElement('label');
+  recurrenceLabel.className = 'cv-label';
+  recurrenceLabel.htmlFor = 'task-recurrence-select';
+  recurrenceLabel.textContent = 'Récurrence';
+  const recurrenceWrap = document.createElement('div');
+  recurrenceWrap.className = 'cv-select';
+  const recurrenceSelect = document.createElement('select');
+  recurrenceSelect.id = 'task-recurrence-select';
+  recurrenceSelect.className = 'cv-input';
+  recurrenceSelect.disabled = readOnly;
+  const noRecOpt = document.createElement('option');
+  noRecOpt.value = '';
+  noRecOpt.textContent = 'Aucune';
+  recurrenceSelect.append(noRecOpt);
+  for (const rec of TASK_RECURRENCES) {
+    const opt = document.createElement('option');
+    opt.value = rec;
+    opt.textContent = getTaskRecurrenceLabel(rec);
+    recurrenceSelect.append(opt);
+  }
+  recurrenceSelect.value = task?.recurrence ?? '';
+  recurrenceWrap.append(recurrenceSelect);
+  const recurrenceHint = document.createElement('span');
+  recurrenceHint.className = 'cv-hint';
+  recurrenceHint.textContent =
+    'Lorsque la tâche est marquée Terminé, l’occurrence suivante est créée automatiquement.';
+  recurrenceField.append(recurrenceLabel, recurrenceWrap, recurrenceHint);
+
+  const tagEditor = createTagEditor({
+    idPrefix: 'task-tags',
+    labelText: 'Étiquettes',
+    initialTags: task?.tags ?? [],
+    suggestions: selectAllTags(state),
+    readOnly,
+  });
+
+  const linkEditor = createLinkEditor({
+    idPrefix: 'task-links',
+    state,
+    currentRef: task ? { kind: 'task', id: task.id } : null,
+    initialLinks: task?.links ?? [],
+    readOnly,
+    onNavigate(ref) {
+      closeDialogById('drawer-task');
+      onClose();
+      onNavigateLocalRef?.(ref);
+    },
+  });
 
   // Checklist section
   /** @type {ChecklistItem[]} */
@@ -275,9 +343,57 @@ export function openTaskDrawer({
     renderChecklist();
   });
 
+  const checklistTemplatePicker = createTemplatePicker({
+    idPrefix: 'task-checklist-tpl',
+    labelText: 'Modèles de checklist',
+    templates: selectTemplates(store.getState(), 'checklist'),
+    readOnly,
+    showSave: true,
+    onApply(tpl) {
+      const added = instantiateChecklistTemplate(tpl, () => crypto.randomUUID());
+      if (added.length === 0) return;
+      checklist = [...checklist, ...added];
+      renderChecklist();
+      notify({ status: 'success', title: 'Modèle de checklist appliqué', text: tpl.name });
+    },
+    onSaveNew(name) {
+      const texts = checklist.map((item) => item.text.trim()).filter(Boolean);
+      if (texts.length === 0) {
+        notify({
+          status: 'warning',
+          title: 'Liste de contrôle vide',
+          text: 'Ajoutez au moins une étape avant d’enregistrer un modèle.',
+        });
+        return false;
+      }
+      const id = crypto.randomUUID();
+      store.dispatch({
+        type: 'create_template',
+        id,
+        kind: 'checklist',
+        name,
+        checklistItems: texts,
+        now: new Date().toISOString(),
+      });
+      checklistTemplatePicker.setTemplates(selectTemplates(store.getState(), 'checklist'), id);
+      notify({ status: 'success', title: 'Modèle de checklist enregistré', text: name });
+      return id;
+    },
+    onDeleteCustom(tpl) {
+      store.dispatch({ type: 'delete_template', id: tpl.id });
+      checklistTemplatePicker.setTemplates(selectTemplates(store.getState(), 'checklist'));
+      notify({ status: 'info', title: 'Modèle supprimé', text: tpl.name });
+    },
+  });
+
   renderChecklist();
   checklistAddRow.append(checklistInput, checklistAddBtn);
-  checklistFieldset.append(checklistLegend, checklistList, checklistAddRow);
+  checklistFieldset.append(
+    checklistLegend,
+    checklistTemplatePicker.element,
+    checklistList,
+    checklistAddRow,
+  );
 
   // Rich text description
   const descField = document.createElement('div');
@@ -289,6 +405,15 @@ export function openTaskDrawer({
   const editorHost = document.createElement('div');
   descField.append(descLabel, editorHost);
 
+  /** @type {Set<string>} */
+  const stagedAssetIds = new Set();
+  /** @param {File} file */
+  async function handleUploadImage(file) {
+    const res = await uploadLocalImage(file);
+    if (res) stagedAssetIds.add(res.assetId);
+    return res;
+  }
+
   /** @type {RichTextDoc} */
   const initialDoc = task?.descriptionDoc ?? EMPTY_RICH_DOC;
   const editorHandle = mountRichTextEditor({
@@ -297,7 +422,7 @@ export function openTaskDrawer({
     editable: !readOnly,
     ariaLabel: 'Description de la tâche',
     resolveAssetUrl,
-    onUploadImage: uploadLocalImage,
+    onUploadImage: handleUploadImage,
     onBlockedRemoteImage: () => {
       notify({
         status: 'warning',
@@ -321,6 +446,9 @@ export function openTaskDrawer({
     statusField,
     priorityField,
     dueField,
+    recurrenceField,
+    tagEditor.element,
+    linkEditor.element,
     checklistFieldset,
     descField,
   );
@@ -352,13 +480,18 @@ export function openTaskDrawer({
       closeDialogById('drawer-task');
       const confirmed = await confirmAction({
         title: `Supprimer « ${task.title} » ?`,
-        message: 'Cette tâche sera définitivement supprimée de ce projet.',
+        message: 'Cette tâche sera déplacée dans la corbeille locale.',
         confirmLabel: 'Supprimer la tâche',
         danger: true,
       });
       if (confirmed) {
-        store.dispatch({ type: 'delete_task', id: task.id });
-        notify({ status: 'info', title: 'Tâche supprimée', text: task.title });
+        store.dispatch({
+          type: 'trash_task',
+          id: task.id,
+          trashId: crypto.randomUUID(),
+          now: new Date().toISOString(),
+        });
+        notify({ status: 'info', title: 'Tâche placée dans la corbeille', text: task.title });
       }
     });
     footerButtons.push(deleteBtn);
@@ -382,6 +515,8 @@ export function openTaskDrawer({
     titleInput.removeAttribute('aria-describedby');
     titleError.hidden = true;
 
+    const tags = tagEditor.commitPending();
+    const links = linkEditor.getLinks();
     const doc = editorHandle.getDoc();
     const assetIds = collectDocAssetIds(doc);
     const now = new Date().toISOString();
@@ -389,6 +524,7 @@ export function openTaskDrawer({
     const status = rawSelectedStatus ? /** @type {TaskStatus} */ (rawSelectedStatus) : null;
     const priority = /** @type {TaskPriority} */ (prioritySelect.value);
     const dueDate = dueInput.value ? dueInput.value : null;
+    const recurrence = normalizeTaskRecurrence(recurrenceSelect.value);
 
     if (isEdit && task) {
       /** @type {{
@@ -397,7 +533,10 @@ export function openTaskDrawer({
        *   status?: TaskStatus | null;
        *   priority: TaskPriority;
        *   dueDate: string | null;
+       *   recurrence?: TaskRecurrence | null;
        *   checklist: readonly ChecklistItem[];
+       *   tags: readonly string[];
+       *   links: readonly LocalRef[];
        *   descriptionDoc: RichTextDoc;
        *   assetIds: readonly string[];
        * }} */
@@ -406,20 +545,33 @@ export function openTaskDrawer({
         projectId: projectSelect.value,
         priority,
         dueDate,
+        recurrence,
         checklist,
+        tags,
+        links,
         descriptionDoc: doc,
         assetIds,
       };
       if (status !== task.status) {
         patch.status = status;
       }
-      store.dispatch({
+      const prevIds = new Set(store.getState().tasks.map((t) => t.id));
+      const { state: nextState } = store.dispatch({
         type: 'update_task',
         id: task.id,
         patch,
         now,
       });
-      notify({ status: 'success', title: 'Tâche enregistrée', text: cleanTitle });
+      const spawned = nextState.tasks.find((t) => !prevIds.has(t.id));
+      if (spawned) {
+        notify({
+          status: 'success',
+          title: 'Prochaine occurrence créée',
+          text: spawned.dueDate ? `${spawned.title} (${spawned.dueDate})` : spawned.title,
+        });
+      } else {
+        notify({ status: 'success', title: 'Tâche enregistrée', text: cleanTitle });
+      }
     } else {
       store.dispatch({
         type: 'create_task',
@@ -429,7 +581,10 @@ export function openTaskDrawer({
         status,
         priority,
         dueDate,
+        recurrence,
         checklist,
+        tags,
+        links,
         descriptionDoc: doc,
         assetIds,
         now,
@@ -437,11 +592,27 @@ export function openTaskDrawer({
       notify({ status: 'success', title: 'Tâche créée', text: cleanTitle });
     }
 
+    const orphanedStaged = selectOrphanedAssetIds(store.getState(), stagedAssetIds);
+    for (const id of orphanedStaged) {
+      store.dispatch({ type: 'delete_asset', id });
+    }
+    stagedAssetIds.clear();
     closeDialogById('drawer-task');
+    onClose();
   });
 
+  let closed = false;
   const onClose = () => {
+    if (closed) return;
+    closed = true;
     drawer.returnValue = '';
+    if (stagedAssetIds.size > 0 && !store.getState().readOnly) {
+      const orphanedStaged = selectOrphanedAssetIds(store.getState(), stagedAssetIds);
+      for (const id of orphanedStaged) {
+        store.dispatch({ type: 'delete_asset', id });
+      }
+      stagedAssetIds.clear();
+    }
     editorHandle.destroy();
     bodyEl.replaceChildren();
     footerEl.replaceChildren();

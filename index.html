@@ -40,6 +40,12 @@
 
         <ul>
           <li>
+            <a class="cv-nav-item" href="#today" data-nav-view="today">
+              <i class="ph ph-sun cv-icon" aria-hidden="true"></i>
+              <span>Aujourd’hui</span>
+            </a>
+          </li>
+          <li>
             <a class="cv-nav-item" href="#tasks" data-nav-view="tasks" aria-current="page">
               <i class="ph ph-list-checks cv-icon" aria-hidden="true"></i>
               <span>Tâches</span>
@@ -49,6 +55,12 @@
             <a class="cv-nav-item" href="#projects" data-nav-view="projects">
               <i class="ph ph-folder-open cv-icon" aria-hidden="true"></i>
               <span>Projets</span>
+            </a>
+          </li>
+          <li>
+            <a class="cv-nav-item" href="#calendar" data-nav-view="calendar">
+              <i class="ph ph-calendar-blank cv-icon" aria-hidden="true"></i>
+              <span>Calendrier</span>
             </a>
           </li>
           <li>
@@ -76,6 +88,18 @@
             >
               <i class="ph ph-archive cv-icon" aria-hidden="true"></i>
               <span>Sauvegardes</span>
+            </button>
+          </li>
+          <li>
+            <button
+              type="button"
+              class="cv-nav-item lc-nav-btn"
+              id="nav-trash-btn"
+              data-cv-open="modal-trash"
+            >
+              <i class="ph ph-trash cv-icon" aria-hidden="true"></i>
+              <span>Corbeille</span>
+              <span class="cv-badge lc-nav-badge" id="nav-trash-count" hidden>0</span>
             </button>
           </li>
         </ul>
@@ -143,6 +167,7 @@
         </header>
 
         <main class="cv-shell__content" id="shell-main" tabindex="-1">
+          <div id="sw-update-slot" aria-live="polite"></div>
           <div id="readonly-banner-slot" aria-live="polite"></div>
           <div id="app-view"></div>
         </main>
@@ -151,7 +176,7 @@
 
     <!-- Command Menu (Ctrl+K / Cmd+K) -->
     <dialog class="cv-cmd" id="cmd-menu" data-cv-shortcut="mod+k" aria-label="Palette de commandes">
-      <div class="cv-combobox" data-cv-inline>
+      <div class="cv-combobox" data-cv-inline data-cv-combobox="1">
         <div class="cv-cmd__search">
           <i class="ph ph-magnifying-glass cv-icon" aria-hidden="true"></i>
           <input
@@ -167,6 +192,10 @@
           <kbd class="cv-kbd">esc</kbd>
         </div>
         <ul class="cv-listbox" id="cmd-list" role="listbox" aria-label="Commandes">
+          <li class="cv-option" role="option" data-value="view:today">
+            <i class="ph ph-sun cv-icon" aria-hidden="true"></i>
+            Aller à Aujourd’hui
+          </li>
           <li class="cv-option" role="option" data-value="view:tasks">
             <i class="ph ph-list-checks cv-icon" aria-hidden="true"></i>
             Aller aux tâches
@@ -174,6 +203,10 @@
           <li class="cv-option" role="option" data-value="view:projects">
             <i class="ph ph-folder-open cv-icon" aria-hidden="true"></i>
             Aller aux projets
+          </li>
+          <li class="cv-option" role="option" data-value="view:calendar">
+            <i class="ph ph-calendar-blank cv-icon" aria-hidden="true"></i>
+            Aller au calendrier
           </li>
           <li class="cv-option" role="option" data-value="view:notes">
             <i class="ph ph-notebook cv-icon" aria-hidden="true"></i>
@@ -206,6 +239,10 @@
           <li class="cv-option" role="option" data-value="action:open-backup">
             <i class="ph ph-archive cv-icon" aria-hidden="true"></i>
             Ouvrir les sauvegardes
+          </li>
+          <li class="cv-option" role="option" data-value="action:open-trash">
+            <i class="ph ph-trash cv-icon" aria-hidden="true"></i>
+            Ouvrir la corbeille
           </li>
           <li class="cv-option" role="option" data-value="action:open-preferences">
             <i class="ph ph-sliders-horizontal cv-icon" aria-hidden="true"></i>
@@ -323,6 +360,30 @@
       </header>
       <div class="cv-modal__body" id="modal-confirm-body"></div>
       <footer class="cv-modal__footer" id="modal-confirm-footer"></footer>
+    </dialog>
+
+    <!-- Local Trash Modal -->
+    <dialog
+      class="cv-modal lc-modal--wide"
+      id="modal-trash"
+      closedby="any"
+      aria-labelledby="modal-trash-title"
+    >
+      <header class="cv-modal__header">
+        <h2 class="cv-modal__title" id="modal-trash-title">Corbeille locale</h2>
+        <button
+          type="button"
+          class="cv-btn cv-btn--ghost cv-btn--icon"
+          aria-label="Fermer"
+          data-cv-close
+        >
+          <i class="ph ph-x cv-icon" aria-hidden="true"></i>
+        </button>
+      </header>
+      <div class="cv-modal__body" id="modal-trash-body"></div>
+      <footer class="cv-modal__footer" id="modal-trash-footer">
+        <button type="button" class="cv-btn" data-cv-close>Fermer</button>
+      </footer>
     </dialog>
 
     <!-- Backup & Storage Modal -->
@@ -511,6 +572,30 @@
             Délai en secondes (1 à 60 s, 6 s par défaut) avant fermeture automatique des
             notifications de succès et d’information. Les avertissements et erreurs restent affichés
             jusqu’à fermeture manuelle.
+          </span>
+        </div>
+
+        <div class="cv-field">
+          <label class="cv-label" for="pref-trash-retention">
+            Rétention de la corbeille (jours)
+          </label>
+          <input
+            class="cv-input cv-input--mono lc-pref-duration-input"
+            id="pref-trash-retention"
+            name="trash-retention-days"
+            type="number"
+            min="1"
+            max="365"
+            step="1"
+            inputmode="numeric"
+            value="30"
+            required
+            aria-describedby="pref-trash-retention-hint"
+          />
+          <span class="cv-error" id="pref-trash-retention-error" aria-live="polite" hidden></span>
+          <span class="cv-hint" id="pref-trash-retention-hint">
+            Délai en jours (1 à 365 j, 30 j par défaut) pendant lequel les éléments supprimés sont
+            conservés localement avant purge automatique définitive.
           </span>
         </div>
 

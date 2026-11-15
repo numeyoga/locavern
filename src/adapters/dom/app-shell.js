@@ -1,6 +1,8 @@
 /** @import { ActiveView, InputPresentation } from '../../types.d.ts' */
+/** @import { CommandPaletteItem } from './command-palette.js' */
 
 import { DEFAULT_TOAST_DURATION_SECONDS, normalizeToastDurationSeconds } from '../../core/model.js';
+import { wireCommandPalette } from './command-palette.js';
 
 const THEME_STORAGE_KEY = 'locavern-color-scheme';
 const TEXT_SIZE_STORAGE_KEY = 'locavern-text-size';
@@ -280,8 +282,10 @@ export function confirmAction({ title, message, confirmLabel, danger = true }) {
 
 /** @type {Record<ActiveView, string>} */
 const VIEW_TITLES = {
+  today: 'Aujourd’hui',
   tasks: 'Tâches',
   projects: 'Projets',
+  calendar: 'Calendrier',
   notes: 'Notes',
   whiteboards: 'Tableaux blancs',
 };
@@ -303,6 +307,70 @@ export function syncNavigationChrome(activeView) {
       node.removeAttribute('aria-current');
     }
   });
+}
+
+/**
+ * Render or clear the offline Service Worker update notification inviting the user to reload.
+ * @param {boolean} available
+ * @param {{ onReload: () => void; onDismiss?: () => void }} [handlers]
+ */
+export function renderSwUpdateBanner(available, handlers) {
+  const slot = document.getElementById('sw-update-slot');
+  if (!slot) return;
+  if (!available || !handlers) {
+    slot.replaceChildren();
+    return;
+  }
+
+  const alert = document.createElement('div');
+  alert.className = 'cv-alert';
+  alert.id = 'sw-update-banner';
+  alert.setAttribute('role', 'status');
+
+  const icon = document.createElement('i');
+  icon.className = 'ph ph-arrows-clockwise cv-icon';
+  icon.setAttribute('aria-hidden', 'true');
+
+  const body = document.createElement('div');
+  body.className = 'cv-alert__body cv-field';
+
+  const textWrap = document.createElement('div');
+  const lead = document.createElement('span');
+  lead.className = 'cv-alert__title';
+  lead.textContent = 'Nouvelle version prête hors ligne. ';
+  textWrap.append(
+    lead,
+    document.createTextNode('Rechargez l’application pour utiliser la version mise à jour.'),
+  );
+
+  const actions = document.createElement('div');
+  actions.className = 'lc-view-header__group';
+
+  const reloadBtn = document.createElement('button');
+  reloadBtn.type = 'button';
+  reloadBtn.className = 'cv-btn cv-btn--primary cv-btn--sm';
+  reloadBtn.id = 'btn-sw-reload';
+  reloadBtn.textContent = 'Recharger';
+  reloadBtn.addEventListener('click', () => {
+    reloadBtn.disabled = true;
+    reloadBtn.textContent = 'Rechargement…';
+    handlers.onReload();
+  });
+
+  const dismissBtn = document.createElement('button');
+  dismissBtn.type = 'button';
+  dismissBtn.className = 'cv-btn cv-btn--sm';
+  dismissBtn.id = 'btn-sw-dismiss';
+  dismissBtn.textContent = 'Plus tard';
+  dismissBtn.addEventListener('click', () => {
+    slot.replaceChildren();
+    handlers.onDismiss?.();
+  });
+
+  actions.append(reloadBtn, dismissBtn);
+  body.append(textWrap, actions);
+  alert.append(icon, body);
+  slot.replaceChildren(alert);
 }
 
 /**
@@ -350,12 +418,9 @@ export function renderReadOnlyBanner(readOnly, onRetryLock) {
 
 /**
  * Wire sidebar navigation links and CommandMenu (Ctrl+K / Cmd+K) actions.
- * @param {{
- *   onSelectView: (view: ActiveView) => void;
- *   onCommand: (commandId: string) => void;
- * }} handlers
+ * @param {{ onSelectView: (view: ActiveView) => void; onCommand: (commandId: string) => void; getCommandItems?: () => CommandPaletteItem[]; }} handlers
  */
-export function wireAppShell({ onSelectView, onCommand }) {
+export function wireAppShell({ onSelectView, onCommand, getCommandItems }) {
   initThemeControl();
   initTextSizeControl();
 
@@ -374,6 +439,8 @@ export function wireAppShell({ onSelectView, onCommand }) {
       }
     });
   });
+
+  wireCommandPalette({ getDynamicItems: getCommandItems });
 
   const cmdDialog = document.getElementById('cmd-menu');
   cmdDialog?.addEventListener('cv:command', (event) => {

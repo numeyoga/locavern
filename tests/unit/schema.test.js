@@ -278,4 +278,61 @@ describe('schema', () => {
       ]);
     }
   });
+
+  it('préserve une récurrence valide et assainit une valeur inconnue sur les tâches importées', () => {
+    const res = validateBackupData({
+      schemaVersion: 2,
+      exportedAt: NOW,
+      projects: [
+        {
+          id: 'p1',
+          name: 'P1',
+          description: '',
+          archived: false,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+      tasks: [
+        {
+          id: 't-valid-rec',
+          projectId: 'p1',
+          title: 'Hebdo',
+          status: 'todo',
+          priority: 'medium',
+          dueDate: '2026-11-15',
+          recurrence: 'weekly',
+          position: 0,
+          descriptionDoc: { type: 'doc', content: [] },
+          checklist: [],
+          assetIds: [],
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+        {
+          id: 't-bad-rec',
+          projectId: 'p1',
+          title: 'Invalide',
+          status: 'todo',
+          priority: 'low',
+          dueDate: null,
+          recurrence: 'hourly',
+          position: 1,
+          descriptionDoc: { type: 'doc', content: [] },
+          checklist: [],
+          assetIds: [],
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+      notes: [],
+      whiteboards: [],
+      assets: [],
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.tasks[0]?.recurrence).toBe('weekly');
+      expect(res.data.tasks[1]?.recurrence).toBeUndefined();
+    }
+  });
 });

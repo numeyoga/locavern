@@ -4,9 +4,16 @@ import {
   createInitialState,
   createStore,
   reduce,
+  selectAllTags,
+  selectEntityLinkEntries,
   selectKanbanColumns,
+  selectUnmappedKanbanTasks,
+  selectNotes,
+  selectOrphanedAssetIds,
   selectReferencedAssetIds,
   selectTasks,
+  selectTodaySummary,
+  selectTrashItems,
   selectWhiteboards,
 } from '../../src/core/store.js';
 
@@ -154,6 +161,101 @@ describe('store', () => {
     const delRes = store.dispatch({ type: 'delete_whiteboard', id: 'wb-2' });
     expect(delRes.effects.some((e) => e.type === 'remove_whiteboard')).toBe(true);
     expect(store.getState().preferences.selectedWhiteboardId).toBe('wb-1');
+  });
+
+  it('étend la recherche locale aux descriptions, checklists, notes Tiptap et textes du tableau blanc', () => {
+    const store = createStore(createInitialState());
+    store.dispatch({ type: 'create_project', id: 'p1', name: 'Recherche', now: T1 });
+
+    store.dispatch({
+      type: 'create_task',
+      id: 't-desc',
+      projectId: 'p1',
+      title: 'Déploiement serveur',
+      descriptionDoc: {
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            content: [{ type: 'text', text: 'Configurer chiffrement AES-GCM hors ligne.' }],
+          },
+        ],
+      },
+      checklist: [{ id: 'c1', text: 'Exporter manifeste sécurité', done: false }],
+      now: T1,
+    });
+
+    store.dispatch({
+      type: 'create_task',
+      id: 't-other',
+      projectId: 'p1',
+      title: 'Documentation',
+      now: T1,
+    });
+
+    store.dispatch({
+      type: 'create_note',
+      id: 'n-rich',
+      projectId: 'p1',
+      title: 'Notes architecture',
+      contentDoc: {
+        type: 'doc',
+        content: [
+          {
+            type: 'bulletList',
+            content: [
+              {
+                type: 'listItem',
+                content: [
+                  {
+                    type: 'paragraph',
+                    content: [{ type: 'text', text: 'Utiliser IndexedDB transactionnel' }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      now: T1,
+    });
+
+    store.dispatch({
+      type: 'create_whiteboard',
+      id: 'wb-text',
+      projectId: 'p1',
+      title: 'Schéma global',
+      elements: [
+        {
+          id: 'el-1',
+          type: 'sticky',
+          x: 0,
+          y: 0,
+          width: 180,
+          height: 120,
+          color: 'warning',
+          text: 'Connecteur synchrone',
+          zIndex: 0,
+        },
+      ],
+      now: T1,
+    });
+
+    expect(selectTasks(store.getState(), { query: 'AES-GCM' }).map((t) => t.id)).toEqual([
+      't-desc',
+    ]);
+    expect(selectTasks(store.getState(), { query: 'securite' }).map((t) => t.id)).toEqual([
+      't-desc',
+    ]);
+    expect(selectKanbanColumns(store.getState(), 'p1', 'manifeste').todo?.map((t) => t.id)).toEqual(
+      ['t-desc'],
+    );
+    expect(selectNotes(store.getState(), { query: 'transactionnel' }).map((n) => n.id)).toEqual([
+      'n-rich',
+    ]);
+    expect(selectWhiteboards(store.getState(), { query: 'connecteur' }).map((w) => w.id)).toEqual([
+      'wb-text',
+    ]);
   });
 
   it('paramètre et normalise le visuel de saisie par écran dans les préférences', () => {
@@ -426,5 +528,450 @@ describe('store', () => {
       'review',
       'done',
     ]);
+  });
+
+  it('identifie les images locales orphelines après modification ou suppression via selectOrphanedAssetIds et delete_asset', () => {
+    const store = createStore(createInitialState());
+    store.dispatch({ type: 'create_project', id: 'p1', name: 'Médias', now: T1 });
+    store.dispatch({
+      type: 'register_asset',
+      asset: { id: 'a1', mimeType: 'image/png', sizeBytes: 10, filename: 'one.png', createdAt: T1 },
+    });
+    store.dispatch({
+      type: 'register_asset',
+      asset: { id: 'a2', mimeType: 'image/png', sizeBytes: 10, filename: 'two.png', createdAt: T1 },
+    });
+    store.dispatch({
+      type: 'create_note',
+      id: 'n1',
+      projectId: 'p1',
+      title: 'Note 1',
+      assetIds: ['a1', 'a2'],
+      now: T1,
+    });
+    store.dispatch({
+      type: 'create_note',
+      id: 'n2',
+      projectId: 'p1',
+      title: 'Note 2 partagée',
+      assetIds: ['a1'],
+      now: T1,
+    });
+
+    expect(selectOrphanedAssetIds(store.getState())).toEqual([]);
+
+    // Supprimer n1 : a2 devient orphelin mais a1 reste utilisé par n2
+    store.dispatch({ type: 'delete_note', id: 'n1' });
+    expect(selectOrphanedAssetIds(store.getState())).toEqual(['a2']);
+
+    const delRes = store.dispatch({ type: 'delete_asset', id: 'a2' });
+    expect(delRes.effects).toEqual([{ type: 'remove_asset', id: 'a2' }]);
+    expect(store.getState().assets.map((a) => a.id)).toEqual(['a1']);
+  });
+
+  it('agrège tâches en retard, échéances proches, priorités hautes et éléments récents dans selectTodaySummary', () => {
+    const store = createStore(createInitialState());
+    store.dispatch({ type: 'create_project', id: 'p1', name: 'P1', now: T1 });
+    store.dispatch({
+      type: 'create_task',
+      id: 't-late',
+      projectId: 'p1',
+      title: 'En retard',
+      priority: 'medium',
+      dueDate: '2026-11-13',
+      now: '2026-11-13T09:00:00.000Z',
+    });
+    store.dispatch({
+      type: 'create_task',
+      id: 't-today',
+      projectId: 'p1',
+      title: 'Pour aujourd’hui',
+      priority: 'high',
+      dueDate: '2026-11-15',
+      now: '2026-11-14T09:00:00.000Z',
+    });
+    store.dispatch({
+      type: 'create_task',
+      id: 't-soon',
+      projectId: 'p1',
+      title: 'Dans 3 jours',
+      priority: 'low',
+      dueDate: '2026-11-18',
+      now: '2026-11-14T10:00:00.000Z',
+    });
+    store.dispatch({
+      type: 'create_task',
+      id: 't-done',
+      projectId: 'p1',
+      title: 'Déjà terminée',
+      status: 'done',
+      priority: 'high',
+      dueDate: '2026-11-10',
+      now: '2026-11-15T08:00:00.000Z',
+    });
+    store.dispatch({
+      type: 'create_note',
+      id: 'n-recent',
+      projectId: 'p1',
+      title: 'Compte-rendu',
+      now: '2026-11-15T12:00:00.000Z',
+    });
+
+    const summary = selectTodaySummary(store.getState(), '2026-11-15');
+    expect(summary.overdueTasks.map((t) => t.id)).toEqual(['t-late']);
+    expect(summary.dueTodayTasks.map((t) => t.id)).toEqual(['t-today']);
+    expect(summary.upcomingTasks.map((t) => t.id)).toEqual(['t-soon']);
+    expect(summary.highPriorityTasks.map((t) => t.id)).toEqual(['t-today']);
+    expect(summary.recentItems[0]?.id).toBe('n-recent');
+  });
+
+  it('filtre le Kanban par priorité et échéance et isole les tâches hors colonnes', () => {
+    const store = createStore(createInitialState());
+    store.dispatch({ type: 'create_project', id: 'p1', name: 'P1', now: T1 });
+    store.dispatch({
+      type: 'create_task',
+      id: 't1',
+      projectId: 'p1',
+      title: 'Retard haute',
+      status: 'todo',
+      priority: 'high',
+      dueDate: '2026-11-10',
+      now: T1,
+    });
+    store.dispatch({
+      type: 'create_task',
+      id: 't2',
+      projectId: 'p1',
+      title: 'Sans échéance basse',
+      status: 'todo',
+      priority: 'low',
+      dueDate: null,
+      now: T1,
+    });
+    store.dispatch({
+      type: 'create_task',
+      id: 't3',
+      projectId: 'p1',
+      title: 'Hors statut',
+      status: null,
+      priority: 'high',
+      dueDate: '2026-11-15',
+      now: T1,
+    });
+
+    const colsHigh = selectKanbanColumns(store.getState(), 'p1', '', {
+      priority: 'high',
+      todayIso: '2026-11-15',
+    });
+    expect(colsHigh.todo?.map((t) => t.id)).toEqual(['t1']);
+
+    const colsUndated = selectKanbanColumns(store.getState(), 'p1', '', {
+      due: 'undated',
+      todayIso: '2026-11-15',
+    });
+    expect(colsUndated.todo?.map((t) => t.id)).toEqual(['t2']);
+
+    const unmapped = selectUnmappedKanbanTasks(store.getState(), 'p1', {
+      priority: 'high',
+      due: 'today',
+      todayIso: '2026-11-15',
+    });
+    expect(unmapped.map((t) => t.id)).toEqual(['t3']);
+  });
+
+  it('normalise les étiquettes transversales sur tâches et notes et filtre au-delà des projets', () => {
+    const store = createStore(createInitialState());
+    store.dispatch({ type: 'create_project', id: 'p1', name: 'Alpha', now: T1 });
+    store.dispatch({ type: 'create_project', id: 'p2', name: 'Beta', now: T1 });
+    store.dispatch({
+      type: 'create_task',
+      id: 't1',
+      projectId: 'p1',
+      title: 'Tâche Alpha',
+      tags: ['#Urgent', 'frontend', 'urgent'],
+      now: T1,
+    });
+    store.dispatch({
+      type: 'create_task',
+      id: 't2',
+      projectId: 'p2',
+      title: 'Tâche Beta',
+      tags: ['Urgent'],
+      now: T1,
+    });
+    store.dispatch({
+      type: 'create_note',
+      id: 'n1',
+      projectId: 'p2',
+      title: 'Note Beta',
+      tags: ['architecture', 'Frontend'],
+      now: T1,
+    });
+
+    expect(selectAllTags(store.getState())).toEqual(['architecture', 'frontend', 'Urgent']);
+    expect(selectTasks(store.getState(), { tag: 'urgent' }).map((t) => t.id)).toEqual(['t1', 't2']);
+    expect(
+      selectNotes(store.getState(), { projectId: 'all', tag: 'frontend' }).map((n) => n.id),
+    ).toEqual(['n1']);
+
+    store.dispatch({
+      type: 'update_note',
+      id: 'n1',
+      patch: { tags: ['architecture'] },
+      now: T2,
+    });
+    expect(selectNotes(store.getState(), { projectId: 'all', tag: 'frontend' })).toEqual([]);
+  });
+
+  it('lie tâches, notes et tableaux blancs par références internes et purge les liens rompus', () => {
+    const store = createStore(createInitialState());
+    store.dispatch({ type: 'create_project', id: 'p1', name: 'Locavern', now: T1 });
+    store.dispatch({
+      type: 'create_note',
+      id: 'n1',
+      projectId: 'p1',
+      title: 'Spec technique',
+      now: T1,
+    });
+    store.dispatch({
+      type: 'create_whiteboard',
+      id: 'w1',
+      projectId: 'p1',
+      title: 'Architecture',
+      now: T1,
+    });
+    store.dispatch({
+      type: 'create_task',
+      id: 't1',
+      projectId: 'p1',
+      title: 'Implémenter liens',
+      links: [
+        { kind: 'note', id: 'n1' },
+        { kind: 'whiteboard', id: 'w1' },
+        { kind: 'task', id: 't1' },
+        { kind: 'note', id: 'n1' },
+      ],
+      now: T1,
+    });
+
+    const taskLinks = selectEntityLinkEntries(store.getState(), 'task', 't1');
+    expect(taskLinks.outgoing.map((e) => `${e.kind}:${e.id}`)).toEqual([
+      'note:n1',
+      'whiteboard:w1',
+    ]);
+
+    const noteLinks = selectEntityLinkEntries(store.getState(), 'note', 'n1');
+    expect(noteLinks.incoming.map((e) => `${e.kind}:${e.id}`)).toEqual(['task:t1']);
+
+    // Suppression du tableau blanc -> lien automatiquement purgé de la tâche
+    store.dispatch({ type: 'delete_whiteboard', id: 'w1' });
+    const afterWbDelete = selectEntityLinkEntries(store.getState(), 'task', 't1');
+    expect(afterWbDelete.outgoing.map((e) => `${e.kind}:${e.id}`)).toEqual(['note:n1']);
+    expect(store.getState().tasks[0]?.links).toEqual([{ kind: 'note', id: 'n1' }]);
+  });
+
+  it('conserve les éléments supprimés en corbeille, préserve leurs images puis purge à expiration', () => {
+    const store = createStore(createInitialState());
+    store.dispatch({
+      type: 'create_project',
+      id: 'p1',
+      name: 'Projet A',
+      now: '2026-11-01T10:00:00.000Z',
+    });
+    store.dispatch({
+      type: 'register_asset',
+      asset: {
+        id: 'a-trash',
+        mimeType: 'image/png',
+        sizeBytes: 12,
+        filename: 't.png',
+        createdAt: T1,
+      },
+    });
+    store.dispatch({
+      type: 'create_note',
+      id: 'n1',
+      projectId: 'p1',
+      title: 'Note sensible',
+      assetIds: ['a-trash'],
+      now: '2026-11-01T10:00:00.000Z',
+    });
+    store.dispatch({
+      type: 'create_task',
+      id: 't1',
+      projectId: 'p1',
+      title: 'Tâche liée',
+      links: [{ kind: 'note', id: 'n1' }],
+      now: '2026-11-01T10:00:00.000Z',
+    });
+
+    // Rétention configurée à 7 jours
+    store.dispatch({ type: 'set_trash_retention_days', days: 7 });
+    expect(store.getState().preferences.trashRetentionDays).toBe(7);
+
+    // Mise en corbeille de la note -> absente des notes actives, présente en corbeille, asset préservé
+    store.dispatch({
+      type: 'trash_note',
+      id: 'n1',
+      trashId: 'tr-n1',
+      now: '2026-11-02T10:00:00.000Z',
+    });
+    expect(store.getState().notes).toHaveLength(0);
+    expect(selectTrashItems(store.getState()).map((i) => i.id)).toEqual(['tr-n1']);
+    expect(selectOrphanedAssetIds(store.getState())).toEqual([]);
+
+    // Restauration -> la note et son lien reviennent intacts
+    store.dispatch({
+      type: 'restore_trash_item',
+      id: 'tr-n1',
+      now: '2026-11-03T10:00:00.000Z',
+    });
+    expect(store.getState().notes).toHaveLength(1);
+    expect(store.getState().trash).toHaveLength(0);
+    expect(selectEntityLinkEntries(store.getState(), 'task', 't1').outgoing).toHaveLength(1);
+
+    // Remise en corbeille puis expiration au bout de 7 jours (le 10 novembre)
+    store.dispatch({
+      type: 'trash_note',
+      id: 'n1',
+      trashId: 'tr-n1-b',
+      now: '2026-11-02T10:00:00.000Z',
+    });
+    store.dispatch({
+      type: 'purge_expired_trash',
+      now: '2026-11-08T10:00:00.000Z',
+    });
+    expect(store.getState().trash).toHaveLength(1);
+
+    store.dispatch({
+      type: 'purge_expired_trash',
+      now: '2026-11-10T10:00:00.000Z',
+    });
+    expect(store.getState().trash).toHaveLength(0);
+    expect(selectOrphanedAssetIds(store.getState())).toEqual(['a-trash']);
+    expect(store.getState().tasks[0]?.links).toEqual([]);
+  });
+
+  it('génère l’occurrence suivante à la complétion d’une tâche récurrente via update_task et move_task', () => {
+    const store = createStore(createInitialState());
+    store.dispatch({ type: 'create_project', id: 'p1', name: 'Ops', now: T1 });
+    store.dispatch({ type: 'create_note', id: 'n1', projectId: 'p1', title: 'Runbook', now: T1 });
+
+    // 1. Récurrence hebdomadaire complétée via update_task
+    store.dispatch({
+      type: 'create_task',
+      id: 't-weekly',
+      projectId: 'p1',
+      title: 'Revue hebdo',
+      status: 'todo',
+      priority: 'high',
+      dueDate: '2026-11-15',
+      recurrence: 'weekly',
+      checklist: [
+        { id: 'c1', text: 'Étape 1', done: true },
+        { id: 'c2', text: 'Étape 2', done: true },
+      ],
+      tags: ['ops'],
+      links: [{ kind: 'note', id: 'n1' }],
+      assetIds: ['asset-1'],
+      descriptionDoc: {
+        type: 'doc',
+        content: [
+          { type: 'paragraph', content: [{ type: 'text', text: 'Description récurrente' }] },
+        ],
+      },
+      now: T1,
+    });
+
+    const updateRes = store.dispatch({
+      type: 'update_task',
+      id: 't-weekly',
+      patch: { status: 'done' },
+      nextOccurrenceId: 't-weekly-2',
+      todayIso: '2026-11-15',
+      now: T2,
+    });
+
+    expect(updateRes.effects.some((e) => e.type === 'persist_tasks')).toBe(true);
+    const completedWeekly = store.getState().tasks.find((t) => t.id === 't-weekly');
+    const spawnedWeekly = store.getState().tasks.find((t) => t.id === 't-weekly-2');
+    expect(completedWeekly?.status).toBe('done');
+    expect(spawnedWeekly).toBeDefined();
+    expect(spawnedWeekly).toMatchObject({
+      id: 't-weekly-2',
+      projectId: 'p1',
+      title: 'Revue hebdo',
+      status: 'todo',
+      priority: 'high',
+      dueDate: '2026-11-22',
+      recurrence: 'weekly',
+      tags: ['ops'],
+      links: [{ kind: 'note', id: 'n1' }],
+      assetIds: ['asset-1'],
+    });
+    expect(spawnedWeekly?.checklist.map((c) => ({ text: c.text, done: c.done }))).toEqual([
+      { text: 'Étape 1', done: false },
+      { text: 'Étape 2', done: false },
+    ]);
+    expect(spawnedWeekly?.checklist[0]?.id).not.toBe('c1');
+
+    // Modifier une tâche déjà terminée ne crée pas de doublon
+    store.dispatch({
+      type: 'update_task',
+      id: 't-weekly',
+      patch: { title: 'Revue hebdo (archive)' },
+      nextOccurrenceId: 't-weekly-dup',
+      now: T2,
+    });
+    expect(store.getState().tasks.find((t) => t.id === 't-weekly-dup')).toBeUndefined();
+
+    // Retirer la récurrence en terminant ne génère pas d’occurrence suivante
+    store.dispatch({
+      type: 'update_task',
+      id: 't-weekly-2',
+      patch: { status: 'done', recurrence: null },
+      nextOccurrenceId: 't-weekly-3',
+      now: T2,
+    });
+    expect(store.getState().tasks.find((t) => t.id === 't-weekly-3')).toBeUndefined();
+
+    // 2. Récurrence mensuelle sans échéance initiale complétée via move_task (fallback todayIso + 1 mois)
+    store.dispatch({
+      type: 'create_task',
+      id: 't-monthly',
+      projectId: 'p1',
+      title: 'Facturation',
+      status: 'in_progress',
+      dueDate: '2026-01-31',
+      recurrence: 'monthly',
+      now: T1,
+    });
+    const moveRes = store.dispatch({
+      type: 'move_task',
+      id: 't-monthly',
+      targetStatus: 'done',
+      targetIndex: 0,
+      nextOccurrenceId: 't-monthly-2',
+      todayIso: '2026-01-31',
+      now: T2,
+    });
+    expect(moveRes.effects.some((e) => e.type === 'persist_tasks')).toBe(true);
+    const spawnedMonthly = store.getState().tasks.find((t) => t.id === 't-monthly-2');
+    expect(spawnedMonthly?.dueDate).toBe('2026-02-28');
+    expect(spawnedMonthly?.status).toBe('todo');
+
+    // 3. Garde readOnly bloque la complétion récurrente
+    store.dispatch({ type: 'set_read_only', readOnly: true });
+    const countBefore = store.getState().tasks.length;
+    const roRes = store.dispatch({
+      type: 'move_task',
+      id: 't-monthly-2',
+      targetStatus: 'done',
+      targetIndex: 0,
+      nextOccurrenceId: 't-monthly-3',
+      now: T2,
+    });
+    expect(roRes.effects).toEqual([]);
+    expect(store.getState().tasks).toHaveLength(countBefore);
   });
 });

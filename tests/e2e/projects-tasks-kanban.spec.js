@@ -35,11 +35,11 @@ test.describe('Projets, Tâches (Liste & Kanban) et accessibilité (Étape 4)', 
     await expect(page.getByRole('heading', { name: 'Refonte web' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Archiver Refonte web' }).click();
-    await expect(page.getByText('Archivé')).toBeVisible();
+    await expect(page.getByText('Archivé', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Désarchiver Refonte web' }).click();
-    await expect(page.getByText('Actif')).toBeVisible();
+    await expect(page.getByText('Actif', { exact: true })).toBeVisible();
 
-    // Accessibilité WCAG 2.2 AA et reflow 320 px sur la vue Projets (boutons Tâches + Notes)
+    // Accessibilité WCAG 2.2 AA et reflow 320 px sur la vue Projets (boutons Tâches + Notes + Tableaux blancs + filtre Actifs/Archivés)
     const projectsLightAxe = await new AxeBuilder({ page })
       .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
       .analyze();
@@ -299,5 +299,179 @@ test.describe('Projets, Tâches (Liste & Kanban) et accessibilité (Étape 4)', 
     // Retourner sur le Kanban : "Tâche en cours" est maintenant dans la colonne "En revue"
     await page.locator('input[name="task-display-mode"][value="kanban"]').check();
     await expect(page.locator('[data-kanban-status="en_revue"]')).toContainText('Tâche en cours');
+  });
+
+  test('filtre Actifs/Archivés et raccourci Ouvrir les tableaux blancs sur les cartes projet', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await page.locator('[data-nav-view="projects"]').click();
+
+    await page.locator('#btn-new-project').click();
+    await page.locator('#project-name-input').fill('Projet Actif');
+    await page.locator('#modal-project button[type="submit"]').click();
+
+    await page.locator('#btn-new-project').click();
+    await page.locator('#project-name-input').fill('Projet Archive');
+    await page.locator('#modal-project button[type="submit"]').click();
+    await page.getByRole('button', { name: 'Archiver Projet Archive' }).click();
+
+    // Filtrer Actifs -> Archivés -> Tous
+    await page.locator('input[name="project-archive-filter"][value="active"]').check();
+    await expect(page.getByRole('heading', { name: 'Projet Actif' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Projet Archive' })).toHaveCount(0);
+
+    await page.locator('input[name="project-archive-filter"][value="archived"]').check();
+    await expect(page.getByRole('heading', { name: 'Projet Archive' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Projet Actif' })).toHaveCount(0);
+
+    await page.locator('input[name="project-archive-filter"][value="all"]').check();
+    await expect(page.getByRole('heading', { name: 'Projet Actif' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Projet Archive' })).toBeVisible();
+
+    // Raccourci Ouvrir les tableaux blancs
+    await page.getByRole('button', { name: 'Ouvrir les tableaux blancs de Projet Actif' }).click();
+    await expect(page.locator('#topbar-title')).toHaveText('Tableaux blancs');
+    const wbProjectLabel = await page
+      .locator('#whiteboards-project-filter option:checked')
+      .textContent();
+    expect(wbProjectLabel).toBe('Projet Actif');
+  });
+
+  test('filtres priorité/échéance sur le Kanban et signalement avec réassignation des tâches hors colonnes', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Créer un projet' }).click();
+    await page.locator('#project-name-input').fill('Kanban avancé');
+    await page.locator('#modal-project button[type="submit"]').click();
+
+    // Tâche priorité haute en retard
+    await page.locator('#btn-new-task').click();
+    await page.locator('#task-title-input').fill('Urgence retard');
+    await page.locator('#task-priority-select').selectOption('high');
+    await page.locator('#task-due-input').fill('2020-01-10');
+    await page.locator('#drawer-task button[type="submit"]').click();
+
+    // Tâche sans échéance priorité basse
+    await page.locator('#btn-new-task').click();
+    await page.locator('#task-title-input').fill('Tâche libre');
+    await page.locator('#task-priority-select').selectOption('low');
+    await page.locator('#drawer-task button[type="submit"]').click();
+
+    // Tâche sans statut
+    await page.locator('#btn-new-task').click();
+    await page.locator('#task-title-input').fill('Tâche orpheline');
+    await page.locator('#task-status-select').selectOption('');
+    await page.locator('#drawer-task button[type="submit"]').click();
+
+    // Basculer sur le Kanban
+    await page.locator('input[name="task-display-mode"][value="kanban"]').check();
+
+    // Le bandeau d’alerte signale la tâche hors colonnes
+    const unmappedAlert = page.locator('#kanban-unmapped-alert');
+    await expect(unmappedAlert).toBeVisible();
+    await expect(unmappedAlert).toContainText('Tâche orpheline');
+    await expect(unmappedAlert).toContainText('Sans statut');
+    await expect(page.locator('.lc-kanban')).not.toContainText('Tâche orpheline');
+
+    // Filtrer par priorité haute puis par échéance "En retard" / "Sans échéance"
+    await page.locator('#kanban-priority-filter').selectOption('high');
+    await expect(page.locator('.lc-kanban')).toContainText('Urgence retard');
+    await expect(page.locator('.lc-kanban')).not.toContainText('Tâche libre');
+
+    await page.locator('#kanban-priority-filter').selectOption('all');
+    await page.locator('#kanban-due-filter').selectOption('undated');
+    await expect(page.locator('.lc-kanban')).toContainText('Tâche libre');
+    await expect(page.locator('.lc-kanban')).not.toContainText('Urgence retard');
+    await page.locator('#kanban-due-filter').selectOption('all');
+
+    // Réassigner la tâche sans statut directement depuis le bandeau vers "En cours"
+    await unmappedAlert
+      .getByLabel('Assigner une colonne à « Tâche orpheline »')
+      .selectOption('in_progress');
+    await expect(unmappedAlert).toHaveCount(0);
+    await expect(page.locator('[data-kanban-status="in_progress"]')).toContainText(
+      'Tâche orpheline',
+    );
+
+    // Ajout rapide en haut d'une colonne Kanban ("Terminé") via Entrée
+    const doneQuickInput = page.locator('#kanban-quick-add-done');
+    await doneQuickInput.fill('Ajout rapide Kanban');
+    await doneQuickInput.press('Enter');
+    await expect(page.locator('[data-kanban-status="done"]')).toContainText('Ajout rapide Kanban');
+
+    // Basculer en vue Liste et tester l'ajout rapide en tête de Liste
+    await page.locator('input[name="task-display-mode"][value="list"]').check();
+    const listQuickInput = page.locator('#list-quick-add-input');
+    await listQuickInput.fill('Ajout rapide Liste');
+    await listQuickInput.press('Enter');
+    await expect(
+      page.getByRole('button', { name: 'Ajout rapide Liste', exact: true }),
+    ).toBeVisible();
+  });
+
+  test('mise en évidence visuelle des tâches en retard, du jour et de la semaine en Liste et Kanban', async ({
+    page,
+  }) => {
+    const offsetIso = (/** @type {number} */ d) => {
+      const dt = new Date();
+      dt.setDate(dt.getDate() + d);
+      return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+    };
+    const yesterday = offsetIso(-2);
+    const today = offsetIso(0);
+    const inThreeDays = offsetIso(3);
+
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Créer un projet' }).click();
+    await page.locator('#project-name-input').fill('Suivi échéances');
+    await page.locator('#modal-project button[type="submit"]').click();
+
+    for (const [title, due] of /** @type {const} */ ([
+      ['Tâche retard', yesterday],
+      ['Tâche jour', today],
+      ['Tâche semaine', inThreeDays],
+    ])) {
+      await page.locator('#btn-new-task').click();
+      await page.locator('#task-title-input').fill(title);
+      await page.locator('#task-due-input').fill(due);
+      await page.locator('#drawer-task button[type="submit"]').click();
+    }
+
+    // Liste : attributs & badges d'urgence visibles
+    await expect(page.locator('tr', { hasText: 'Tâche retard' })).toHaveAttribute(
+      'data-due-urgency',
+      'overdue',
+    );
+    await expect(page.locator('tr', { hasText: 'Tâche retard' })).toContainText('En retard');
+    await expect(page.locator('tr', { hasText: 'Tâche jour' })).toHaveAttribute(
+      'data-due-urgency',
+      'today',
+    );
+    await expect(page.locator('tr', { hasText: 'Tâche jour' })).toContainText('Aujourd’hui');
+    await expect(page.locator('tr', { hasText: 'Tâche semaine' })).toHaveAttribute(
+      'data-due-urgency',
+      'this_week',
+    );
+    await expect(page.locator('tr', { hasText: 'Tâche semaine' })).toContainText('Cette semaine');
+
+    // Kanban : cartes soulignées & badgées
+    await page.locator('input[name="task-display-mode"][value="kanban"]').check();
+    await expect(
+      page.locator('[data-kanban-task-id]', { hasText: 'Tâche retard' }),
+    ).toHaveAttribute('data-due-urgency', 'overdue');
+    await expect(page.locator('[data-kanban-task-id]', { hasText: 'Tâche jour' })).toHaveAttribute(
+      'data-due-urgency',
+      'today',
+    );
+    await expect(
+      page.locator('[data-kanban-task-id]', { hasText: 'Tâche semaine' }),
+    ).toHaveAttribute('data-due-urgency', 'this_week');
+
+    const axeLight = await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+      .analyze();
+    expect(axeLight.violations).toEqual([]);
   });
 });

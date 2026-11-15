@@ -95,6 +95,9 @@ function makeToolbarButton({ icon, label, toggle = false, onClick }) {
   ic.className = `ph ${icon} cv-icon`;
   ic.setAttribute('aria-hidden', 'true');
   btn.append(ic);
+  btn.addEventListener('mousedown', (event) => {
+    event.preventDefault();
+  });
   btn.addEventListener('click', onClick);
   return btn;
 }
@@ -319,11 +322,23 @@ export function mountRichTextEditor({
     toggle: true,
     onClick: () => editor.chain().focus().toggleCode().run(),
   });
-  const btnHeading = makeToolbarButton({
+  const btnHeading1 = makeToolbarButton({
+    icon: 'ph-text-h-one',
+    label: 'Titre 1',
+    toggle: true,
+    onClick: () => editor.chain().focus().toggleHeading({ level: 1 }).run(),
+  });
+  const btnHeading2 = makeToolbarButton({
     icon: 'ph-text-h-two',
-    label: 'Titre',
+    label: 'Titre 2',
     toggle: true,
     onClick: () => editor.chain().focus().toggleHeading({ level: 2 }).run(),
+  });
+  const btnHeading3 = makeToolbarButton({
+    icon: 'ph-text-h-three',
+    label: 'Titre 3',
+    toggle: true,
+    onClick: () => editor.chain().focus().toggleHeading({ level: 3 }).run(),
   });
   const btnBullet = makeToolbarButton({
     icon: 'ph-list-bullets',
@@ -367,7 +382,9 @@ export function mountRichTextEditor({
     btnItalic,
     btnStrike,
     btnCode,
-    btnHeading,
+    btnHeading1,
+    btnHeading2,
+    btnHeading3,
     btnBullet,
     btnOrdered,
     btnTaskList,
@@ -380,7 +397,9 @@ export function mountRichTextEditor({
     btnItalic.setAttribute('aria-pressed', String(editor.isActive('italic')));
     btnStrike.setAttribute('aria-pressed', String(editor.isActive('strike')));
     btnCode.setAttribute('aria-pressed', String(editor.isActive('code')));
-    btnHeading.setAttribute('aria-pressed', String(editor.isActive('heading', { level: 2 })));
+    btnHeading1.setAttribute('aria-pressed', String(editor.isActive('heading', { level: 1 })));
+    btnHeading2.setAttribute('aria-pressed', String(editor.isActive('heading', { level: 2 })));
+    btnHeading3.setAttribute('aria-pressed', String(editor.isActive('heading', { level: 3 })));
     btnBullet.setAttribute('aria-pressed', String(editor.isActive('bulletList')));
     btnOrdered.setAttribute('aria-pressed', String(editor.isActive('orderedList')));
     btnTaskList.setAttribute('aria-pressed', String(editor.isActive('taskList')));

@@ -1,7 +1,8 @@
 /** @import { AppCommand, AppState, StoreEffect, Task, TaskPriority, TaskStatus, TaskStatusFilter } from '../../types.d.ts' */
 
-import { getTaskStatusMeta } from '../../core/model.js';
-import { selectProjectById, selectTasks } from '../../core/store.js';
+import { classifyDueDateUrgency, getTodayIsoDate } from '../../core/dates.js';
+import { getTaskRecurrenceLabel, getTaskStatusMeta } from '../../core/model.js';
+import { selectAllTags, selectProjectById, selectTasks } from '../../core/store.js';
 import { confirmAction, notify } from './app-shell.js';
 import { createTaskWorkspaceHeader } from './task-workspace-header.js';
 
@@ -16,7 +17,7 @@ const PRIORITY_META = {
  * Create a Covenant badge element.
  * @param {string} label
  * @param {string} badgeClass
- * @param {{ warningIcon?: boolean; statusBadgeKind?: 'known' | 'missing' | 'unknown' }} [opts]
+ * @param {{ warningIcon?: boolean; iconName?: string; statusBadgeKind?: 'known' | 'missing' | 'unknown' }} [opts]
  * @returns {HTMLSpanElement}
  */
 function makeBadge(label, badgeClass, opts = {}) {
@@ -25,9 +26,9 @@ function makeBadge(label, badgeClass, opts = {}) {
   if (opts.statusBadgeKind) {
     badge.dataset.statusBadge = opts.statusBadgeKind;
   }
-  if (opts.warningIcon) {
+  if (opts.iconName || opts.warningIcon) {
     const ic = document.createElement('i');
-    ic.className = 'ph ph-warning cv-icon';
+    ic.className = `ph ${opts.iconName ?? 'ph-warning'} cv-icon`;
     ic.setAttribute('aria-hidden', 'true');
     badge.append(ic, document.createTextNode(` ${label}`));
   } else {
@@ -50,6 +51,7 @@ function makeBadge(label, badgeClass, opts = {}) {
  *     query: string;
  *     status: TaskStatusFilter;
  *     priority: TaskPriority | 'all';
+ *     tag: string | 'all';
  *     sortBy: 'position' | 'dueDate' | 'priority';
  *   };
  *   onOpenNewProject: () => void;
@@ -119,7 +121,7 @@ export function renderTaskListView({
   searchInput.id = 'list-search-input';
   searchInput.type = 'search';
   searchInput.className = 'cv-input';
-  searchInput.placeholder = 'Filtrer par titre';
+  searchInput.placeholder = 'Titre, description, checklist';
   searchInput.value = filters.query;
   searchGroup.append(searchIcon, searchInput);
   searchField.append(searchLabel, searchGroup);
@@ -211,7 +213,135 @@ export function renderTaskListView({
   sortWrap.append(sortSelect);
   sortField.append(sortLabel, sortWrap);
 
-  filtersBar.append(searchField, statusField, priorityField, sortField);
+  const tagField = document.createElement('div');
+  tagField.className = 'cv-field';
+  const tagLabel = document.createElement('label');
+  tagLabel.className = 'cv-label';
+  tagLabel.htmlFor = 'list-tag-filter';
+  tagLabel.textContent = 'Étiquette';
+  const tagWrap = document.createElement('div');
+  tagWrap.className = 'cv-select';
+  const tagSelect = document.createElement('select');
+  tagSelect.id = 'list-tag-filter';
+  tagSelect.className = 'cv-input';
+  const allTagsList = selectAllTags(state);
+  const allTagOpt = document.createElement('option');
+  allTagOpt.value = 'all';
+  allTagOpt.textContent = 'Toutes les étiquettes';
+  tagSelect.append(allTagOpt);
+  for (const tag of allTagsList) {
+    const opt = document.createElement('option');
+    opt.value = tag;
+    opt.textContent = `#${tag}`;
+    tagSelect.append(opt);
+  }
+  if (
+    filters.tag !== 'all' &&
+    !allTagsList.some((t) => t.toLowerCase() === filters.tag.toLowerCase())
+  ) {
+    filters.tag = 'all';
+  }
+  tagSelect.value = filters.tag;
+  tagWrap.append(tagSelect);
+  tagField.append(tagLabel, tagWrap);
+
+  filtersBar.append(searchField, statusField, priorityField, tagField, sortField);
+
+  // Quick-add bar at top of List view
+  const quickForm = document.createElement('form');
+  quickForm.id = 'list-quick-add-form';
+  quickForm.className = 'lc-quick-add';
+  quickForm.noValidate = true;
+
+  const quickLabel = document.createElement('label');
+  quickLabel.className = 'lc-sr-only';
+  quickLabel.htmlFor = 'list-quick-add-input';
+  quickLabel.textContent = 'Ajout rapide d’une tâche';
+
+  const quickInput = document.createElement('input');
+  quickInput.id = 'list-quick-add-input';
+  quickInput.type = 'text';
+  quickInput.className = 'cv-input lc-quick-add__input';
+  quickInput.maxLength = 200;
+  quickInput.disabled = state.readOnly;
+  quickInput.placeholder = 'Ajout rapide d’une tâche…';
+
+  /** @type {HTMLSelectElement | null} */
+  let quickProjectSelect = null;
+  if (!state.preferences.selectedProjectId) {
+    quickProjectSelect = document.createElement('select');
+    quickProjectSelect.id = 'list-quick-add-project';
+    quickProjectSelect.className = 'cv-input lc-quick-add__project';
+    quickProjectSelect.disabled = state.readOnly;
+    quickProjectSelect.setAttribute('aria-label', 'Projet cible pour l’ajout rapide');
+    for (const proj of state.projects) {
+      const opt = document.createElement('option');
+      opt.value = proj.id;
+      opt.textContent = proj.archived ? `${proj.name} (archivé)` : proj.name;
+      quickProjectSelect.append(opt);
+    }
+    const firstActive = state.projects.find((p) => !p.archived) ?? state.projects[0];
+    if (firstActive) quickProjectSelect.value = firstActive.id;
+  }
+
+  const quickSubmitBtn = document.createElement('button');
+  quickSubmitBtn.type = 'submit';
+  quickSubmitBtn.id = 'list-quick-add-submit';
+  quickSubmitBtn.className = 'cv-btn cv-btn--primary cv-btn--sm';
+  quickSubmitBtn.disabled = state.readOnly;
+  quickSubmitBtn.textContent = 'Ajouter rapidement';
+
+  let quickComposing = false;
+  quickInput.addEventListener('compositionstart', () => {
+    quickComposing = true;
+  });
+  quickInput.addEventListener('compositionend', () => {
+    quickComposing = false;
+  });
+
+  quickForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (quickComposing) return;
+    const latestState = store.getState();
+    if (latestState.readOnly) return;
+    const cleanTitle = quickInput.value.trim();
+    if (!cleanTitle) {
+      quickInput.focus();
+      return;
+    }
+    const targetProjectId =
+      latestState.preferences.selectedProjectId ??
+      quickProjectSelect?.value ??
+      (latestState.projects.find((p) => !p.archived) ?? latestState.projects[0])?.id;
+    if (!targetProjectId) return;
+
+    const defaultStatus =
+      filters.status !== 'all' && filters.status !== '__none__' && filters.status !== '__unknown__'
+        ? filters.status
+        : (latestState.preferences.taskStatuses[0]?.id ?? null);
+    const defaultPriority = filters.priority !== 'all' ? filters.priority : 'medium';
+
+    store.dispatch({
+      type: 'create_task',
+      id: crypto.randomUUID(),
+      projectId: targetProjectId,
+      title: cleanTitle,
+      status: defaultStatus,
+      priority: defaultPriority,
+      dueDate: null,
+      now: new Date().toISOString(),
+    });
+    notify({ status: 'success', title: 'Tâche ajoutée', text: cleanTitle });
+    requestAnimationFrame(() => {
+      document.getElementById('list-quick-add-input')?.focus();
+    });
+  });
+
+  if (quickProjectSelect) {
+    quickForm.append(quickLabel, quickInput, quickProjectSelect, quickSubmitBtn);
+  } else {
+    quickForm.append(quickLabel, quickInput, quickSubmitBtn);
+  }
 
   const tableSlot = document.createElement('div');
 
@@ -222,6 +352,7 @@ export function renderTaskListView({
       projectId: currentState.preferences.selectedProjectId,
       status: filters.status,
       priority: filters.priority,
+      tag: filters.tag,
       query: filters.query,
       sortBy: filters.sortBy,
     });
@@ -291,6 +422,22 @@ export function renderTaskListView({
     }
     thead.append(headRow);
 
+    const todayIso = getTodayIsoDate();
+    /** @type {Record<'overdue' | 'today' | 'this_week', { label: string; badgeClass: string; iconName: string }>} */
+    const URGENCY_META = {
+      overdue: {
+        label: 'En retard',
+        badgeClass: 'cv-badge cv-badge--danger',
+        iconName: 'ph-warning-circle',
+      },
+      today: { label: 'Aujourd’hui', badgeClass: 'cv-badge cv-badge--warning', iconName: 'ph-sun' },
+      this_week: {
+        label: 'Cette semaine',
+        badgeClass: 'cv-badge cv-badge--accent',
+        iconName: 'ph-calendar-blank',
+      },
+    };
+
     const tbody = document.createElement('tbody');
     for (const task of tasks) {
       const tr = document.createElement('tr');
@@ -307,6 +454,26 @@ export function renderTaskListView({
       titleBtn.textContent = task.title;
       titleBtn.addEventListener('click', () => onOpenTaskDrawer(task));
       tdTitle.append(titleBtn);
+      if (task.recurrence || (task.tags ?? []).length > 0) {
+        const tagList = document.createElement('div');
+        tagList.className = 'lc-tags-inline';
+        if (task.recurrence) {
+          const recBadge = makeBadge(
+            getTaskRecurrenceLabel(task.recurrence),
+            'cv-badge cv-badge--info',
+            { iconName: 'ph-arrows-clockwise' },
+          );
+          recBadge.dataset.recurrenceBadge = task.recurrence;
+          tagList.append(recBadge);
+        }
+        for (const tag of task.tags ?? []) {
+          const pill = document.createElement('span');
+          pill.className = 'cv-tag';
+          pill.textContent = `#${tag}`;
+          tagList.append(pill);
+        }
+        tdTitle.append(tagList);
+      }
 
       const tdProject = document.createElement('td');
       tdProject.textContent = selectProjectById(currentState, task.projectId)?.name ?? 'Projet';
@@ -323,9 +490,26 @@ export function renderTaskListView({
       const priorityInfo = PRIORITY_META[task.priority];
       tdPriority.append(makeBadge(priorityInfo.label, priorityInfo.badgeClass));
 
+      const urgency = classifyDueDateUrgency(task.dueDate, todayIso, task.status);
       const tdDue = document.createElement('td');
       tdDue.className = 'cv-num';
-      tdDue.textContent = task.dueDate ?? '—';
+      if (urgency === 'overdue' || urgency === 'today' || urgency === 'this_week') {
+        tr.dataset.dueUrgency = urgency;
+        tr.classList.add(`lc-task-row--${urgency}`);
+        const wrapDue = document.createElement('span');
+        wrapDue.className = 'lc-due-cell';
+        const dateSpan = document.createElement('span');
+        dateSpan.textContent = task.dueDate ?? '';
+        const urgMeta = URGENCY_META[urgency];
+        const urgBadge = makeBadge(urgMeta.label, urgMeta.badgeClass, {
+          iconName: urgMeta.iconName,
+        });
+        urgBadge.dataset.dueBadge = urgency;
+        wrapDue.append(dateSpan, urgBadge);
+        tdDue.append(wrapDue);
+      } else {
+        tdDue.textContent = task.dueDate ?? '—';
+      }
 
       const tdActions = document.createElement('td');
       const actions = document.createElement('div');
@@ -360,12 +544,21 @@ export function renderTaskListView({
       quickStatus.value = task.status ?? '';
       quickStatus.addEventListener('change', () => {
         const nextStatus = quickStatus.value ? /** @type {TaskStatus} */ (quickStatus.value) : null;
-        store.dispatch({
+        const prevIds = new Set(store.getState().tasks.map((t) => t.id));
+        const { state: nextState } = store.dispatch({
           type: 'update_task',
           id: task.id,
           patch: { status: nextStatus },
           now: new Date().toISOString(),
         });
+        const spawned = nextState.tasks.find((t) => !prevIds.has(t.id));
+        if (spawned) {
+          notify({
+            status: 'success',
+            title: 'Prochaine occurrence créée',
+            text: spawned.dueDate ? `${spawned.title} (${spawned.dueDate})` : spawned.title,
+          });
+        }
       });
 
       const editBtn = document.createElement('button');
@@ -384,13 +577,18 @@ export function renderTaskListView({
       delBtn.addEventListener('click', async () => {
         const confirmed = await confirmAction({
           title: `Supprimer « ${task.title} » ?`,
-          message: 'Cette tâche sera définitivement supprimée.',
+          message: 'Cette tâche sera déplacée dans la corbeille locale.',
           confirmLabel: 'Supprimer',
           danger: true,
         });
         if (!confirmed) return;
-        store.dispatch({ type: 'delete_task', id: task.id });
-        notify({ status: 'info', title: 'Tâche supprimée', text: task.title });
+        store.dispatch({
+          type: 'trash_task',
+          id: task.id,
+          trashId: crypto.randomUUID(),
+          now: new Date().toISOString(),
+        });
+        notify({ status: 'info', title: 'Tâche placée dans la corbeille', text: task.title });
       });
 
       actions.append(quickStatus, editBtn, delBtn);
@@ -417,11 +615,15 @@ export function renderTaskListView({
     filters.priority = /** @type {TaskPriority | 'all'} */ (prioritySelect.value);
     renderTable();
   });
+  tagSelect.addEventListener('change', () => {
+    filters.tag = tagSelect.value;
+    renderTable();
+  });
   sortSelect.addEventListener('change', () => {
     filters.sortBy = /** @type {'position' | 'dueDate' | 'priority'} */ (sortSelect.value);
     renderTable();
   });
 
   renderTable();
-  container.replaceChildren(header, filtersBar, tableSlot);
+  container.replaceChildren(header, filtersBar, quickForm, tableSlot);
 }

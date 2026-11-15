@@ -1,6 +1,8 @@
 /** @import { AppCommand, AppState, StoreEffect, Whiteboard } from '../../types.d.ts' */
 
 import { DEFAULT_WHITEBOARD_VIEWPORT } from '../../core/model.js';
+import { selectTemplates } from '../../core/store.js';
+import { instantiateWhiteboardTemplate } from '../../core/templates.js';
 import {
   applyDialogPresentation,
   closeDialogById,
@@ -110,7 +112,37 @@ export function openWhiteboardDialog({
   projectSelectWrap.append(projectSelect);
   projectField.append(projectLabel, projectSelectWrap);
 
-  form.append(titleField, projectField);
+  /** @type {HTMLSelectElement | null} */
+  let templateSelect = null;
+  if (!isEdit) {
+    const tplField = document.createElement('div');
+    tplField.className = 'cv-field';
+    const tplLabel = document.createElement('label');
+    tplLabel.className = 'cv-label';
+    tplLabel.htmlFor = 'whiteboard-dialog-template-select';
+    tplLabel.textContent = 'Modèle de canevas';
+    const tplWrap = document.createElement('div');
+    tplWrap.className = 'cv-select';
+    templateSelect = document.createElement('select');
+    templateSelect.id = 'whiteboard-dialog-template-select';
+    templateSelect.className = 'cv-input';
+    templateSelect.disabled = readOnly;
+    const blankOpt = document.createElement('option');
+    blankOpt.value = '';
+    blankOpt.textContent = 'Canevas vierge';
+    templateSelect.append(blankOpt);
+    for (const tpl of selectTemplates(state, 'whiteboard')) {
+      const opt = document.createElement('option');
+      opt.value = tpl.id;
+      opt.textContent = tpl.builtin ? tpl.name : `${tpl.name} (modèle local)`;
+      templateSelect.append(opt);
+    }
+    tplWrap.append(templateSelect);
+    tplField.append(tplLabel, tplWrap);
+    form.append(titleField, projectField, tplField);
+  } else {
+    form.append(titleField, projectField);
+  }
   bodyEl.replaceChildren(form);
 
   const cancelBtn = document.createElement('button');
@@ -138,13 +170,22 @@ export function openWhiteboardDialog({
       closeDialogById('dialog-whiteboard');
       const confirmed = await confirmAction({
         title: `Supprimer « ${whiteboard.title} » ?`,
-        message: 'Ce tableau blanc sera définitivement supprimé.',
+        message: 'Ce tableau blanc sera déplacé dans la corbeille locale.',
         confirmLabel: 'Supprimer le tableau blanc',
         danger: true,
       });
       if (confirmed) {
-        store.dispatch({ type: 'delete_whiteboard', id: whiteboard.id });
-        notify({ status: 'info', title: 'Tableau blanc supprimé', text: whiteboard.title });
+        store.dispatch({
+          type: 'trash_whiteboard',
+          id: whiteboard.id,
+          trashId: crypto.randomUUID(),
+          now: new Date().toISOString(),
+        });
+        notify({
+          status: 'info',
+          title: 'Tableau blanc placé dans la corbeille',
+          text: whiteboard.title,
+        });
       }
     });
     footerButtons.push(deleteBtn);
@@ -183,14 +224,21 @@ export function openWhiteboardDialog({
       });
       notify({ status: 'success', title: 'Tableau blanc enregistré', text: cleanTitle });
     } else {
+      const selectedTplId = templateSelect?.value ?? '';
+      const selectedTpl = selectedTplId
+        ? selectTemplates(store.getState(), 'whiteboard').find((t) => t.id === selectedTplId)
+        : undefined;
+      const instantiated = selectedTpl
+        ? instantiateWhiteboardTemplate(selectedTpl, () => crypto.randomUUID())
+        : { viewport: DEFAULT_WHITEBOARD_VIEWPORT, elements: [] };
       const id = crypto.randomUUID();
       store.dispatch({
         type: 'create_whiteboard',
         id,
         projectId,
         title: cleanTitle,
-        viewport: DEFAULT_WHITEBOARD_VIEWPORT,
-        elements: [],
+        viewport: instantiated.viewport,
+        elements: instantiated.elements,
         assetIds: [],
         now,
       });

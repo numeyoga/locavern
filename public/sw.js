@@ -34,9 +34,17 @@ self.addEventListener('install', (event) => {
         // Precache manifest is optional in dev mode.
       }
       await cache.addAll([...urls]);
-      await self.skipWaiting();
+      if (!self.registration.active) {
+        await self.skipWaiting();
+      }
     })(),
   );
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    void self.skipWaiting();
+  }
 });
 
 self.addEventListener('activate', (event) => {

@@ -1,20 +1,27 @@
 /** @import { AllowedImageMimeType, BackupData, BackupManifest } from '../types.d.ts' */
 
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
+import { validateArchiveContents } from '../core/backup.js';
+import {
+  decryptArchiveBytes,
+  encryptArchiveBytes,
+  parseEncryptionHeader,
+} from '../core/crypto-archive.js';
 import { ALLOWED_IMAGE_MIMES } from '../core/model.js';
 import { MAX_ARCHIVE_BYTES, MAX_ASSET_BYTES } from '../core/schema.js';
-import { validateArchiveContents } from '../core/backup.js';
 
 /**
  * Create a ZIP archive Blob containing manifest.json, data.json and assets/*.
+ * When `password` is provided, encrypts the ZIP payload with AES-GCM + PBKDF2.
  * @param {{
  *   manifest: BackupManifest;
  *   data: BackupData;
  *   assetBlobs: ReadonlyMap<string, Blob>;
+ *   password?: string;
  * }} input
  * @returns {Promise<Blob>}
  */
-export async function buildArchiveZipBlob({ manifest, data, assetBlobs }) {
+export async function buildArchiveZipBlob({ manifest, data, assetBlobs, password }) {
   /** @type {Record<string, Uint8Array>} */
   const files = {
     'manifest.json': strToU8(JSON.stringify(manifest, null, 2)),
@@ -30,6 +37,21 @@ export async function buildArchiveZipBlob({ manifest, data, assetBlobs }) {
   }
 
   const zipped = zipSync(files, { level: 6 });
+
+  if (typeof password === 'string' && password.length > 0) {
+    const { header, ciphertext } = await encryptArchiveBytes(zipped, password);
+    const outerZip = zipSync(
+      {
+        'encryption.json': strToU8(JSON.stringify(header, null, 2)),
+        'payload.enc': ciphertext,
+      },
+      { level: 0 },
+    );
+    const encryptedCopy = new Uint8Array(outerZip.byteLength);
+    encryptedCopy.set(outerZip);
+    return new Blob([encryptedCopy.buffer], { type: 'application/zip' });
+  }
+
   const copy = new Uint8Array(zipped.byteLength);
   copy.set(zipped);
   return new Blob([copy.buffer], { type: 'application/zip' });
@@ -53,14 +75,105 @@ export function triggerArchiveDownload(blob, filename) {
 }
 
 /**
- * Read, extract and validate a backup ZIP archive from a Blob or File.
+ * @typedef {{
+ *   createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }>;
+ * }} SaveFileHandleLike
+ */
+
+/**
+ * Resolve window.showSaveFilePicker when natively usable.
+ * Headless Chromium exposes the API on localhost yet auto-aborts without a UI,
+ * so skip only the unmocked native stub under HeadlessChrome while keeping explicit mocks active.
+ * @returns {((options?: unknown) => Promise<SaveFileHandleLike>) | null}
+ */
+function resolveWindowSavePicker() {
+  if (typeof window === 'undefined') return null;
+  const candidate = /** @type {{ showSaveFilePicker?: unknown }} */ (window).showSaveFilePicker;
+  if (typeof candidate !== 'function') return null;
+
+  const isHeadlessChrome =
+    typeof navigator !== 'undefined' && navigator.userAgent.includes('HeadlessChrome');
+  if (isHeadlessChrome) {
+    try {
+      if (Function.prototype.toString.call(candidate).includes('[native code]')) {
+        return null;
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  return /** @type {{ showSaveFilePicker: (options?: unknown) => Promise<SaveFileHandleLike> }} */ (
+    /** @type {unknown} */ (window)
+  ).showSaveFilePicker.bind(window);
+}
+
+/**
+ * Save a Blob via File System Access API (showSaveFilePicker) when available,
+ * falling back to standard anchor download when unsupported or blocked.
+ * Respects user cancellation (AbortError) without triggering a fallback download.
+ *
+ * @param {Blob} blob
+ * @param {string} filename
+ * @param {{
+ *   showSaveFilePicker?: (options?: unknown) => Promise<SaveFileHandleLike>;
+ *   fallbackDownload?: (blob: Blob, filename: string) => void;
+ *   pickerTypes?: Array<{ description: string; accept: Record<string, string[]> }>;
+ * }} [deps]
+ * @returns {Promise<{ saved: true; method: 'picker' | 'download' } | { saved: false; cancelled: true }>}
+ */
+export async function saveArchiveBlob(blob, filename, deps = {}) {
+  const picker = deps.showSaveFilePicker ?? resolveWindowSavePicker();
+  const downloadFn = deps.fallbackDownload ?? triggerArchiveDownload;
+  const types = deps.pickerTypes ?? [
+    {
+      description: 'Archive Locavern (ZIP)',
+      accept: { 'application/zip': ['.zip'] },
+    },
+  ];
+
+  if (picker) {
+    try {
+      const handle = await picker({
+        suggestedName: filename,
+        types,
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return { saved: true, method: 'picker' };
+    } catch (err) {
+      const name = err instanceof Error ? err.name : '';
+      if (name === 'AbortError') {
+        return { saved: false, cancelled: true };
+      }
+      if (
+        name === 'SecurityError' ||
+        name === 'NotAllowedError' ||
+        name === 'NotSupportedError' ||
+        name === 'TypeError'
+      ) {
+        downloadFn(blob, filename);
+        return { saved: true, method: 'download' };
+      }
+      throw err;
+    }
+  }
+
+  downloadFn(blob, filename);
+  return { saved: true, method: 'download' };
+}
+
+/**
+ * Read, extract and validate a backup ZIP archive from a Blob or File (optionally password-protected).
  * @param {Blob} file
+ * @param {{ password?: string }} [options]
  * @returns {Promise<
- *   | { ok: true; manifest: BackupManifest; data: BackupData; blobs: Map<string, Blob> }
- *   | { ok: false; error: string }
+ *   | { ok: true; manifest: BackupManifest; data: BackupData; blobs: Map<string, Blob>; encrypted: boolean }
+ *   | { ok: false; error: string; needsPassword?: boolean; wrongPassword?: boolean }
  * >}
  */
-export async function parseArchiveFile(file) {
+export async function parseArchiveFile(file, options = {}) {
   if (file.size === 0) {
     return { ok: false, error: 'Impossible d’importer l’archive. Le fichier est vide.' };
   }
@@ -81,6 +194,66 @@ export async function parseArchiveFile(file) {
       ok: false,
       error: 'Impossible d’ouvrir l’archive. Le fichier ZIP est corrompu ou invalide.',
     };
+  }
+
+  let encrypted = false;
+  const encryptionMetaBytes = entries['encryption.json'];
+  if (encryptionMetaBytes) {
+    /** @type {unknown} */
+    let rawHeader;
+    try {
+      rawHeader = JSON.parse(strFromU8(encryptionMetaBytes));
+    } catch {
+      return {
+        ok: false,
+        error: 'Métadonnées de chiffrement illisibles dans l’archive.',
+      };
+    }
+    const headerCheck = parseEncryptionHeader(rawHeader);
+    if (!headerCheck.ok) {
+      return headerCheck;
+    }
+    const ciphertextBytes = entries['payload.enc'];
+    if (!ciphertextBytes || ciphertextBytes.byteLength < 16) {
+      return {
+        ok: false,
+        error: 'Archive chiffrée incomplète. Le fichier payload.enc est manquant.',
+      };
+    }
+    if (typeof options.password !== 'string' || options.password.length === 0) {
+      return {
+        ok: false,
+        needsPassword: true,
+        error: 'Cette archive est protégée par mot de passe.',
+      };
+    }
+
+    const decrypted = await decryptArchiveBytes(rawHeader, ciphertextBytes, options.password);
+    if (!decrypted.ok) {
+      return {
+        ok: false,
+        needsPassword: Boolean(decrypted.wrongPassword),
+        ...(decrypted.wrongPassword ? { wrongPassword: true } : {}),
+        error: decrypted.error,
+      };
+    }
+
+    if (decrypted.plaintextZipBytes.byteLength > MAX_ARCHIVE_BYTES) {
+      return {
+        ok: false,
+        error: 'L’archive déchiffrée dépasse la limite autorisée de 25 Mio.',
+      };
+    }
+
+    try {
+      entries = unzipSync(decrypted.plaintextZipBytes);
+    } catch {
+      return {
+        ok: false,
+        error: 'Archive déchiffrée invalide ou corrompue.',
+      };
+    }
+    encrypted = true;
   }
 
   const manifestBytes = entries['manifest.json'];
@@ -138,6 +311,7 @@ export async function parseArchiveFile(file) {
     manifest: /** @type {BackupManifest} */ (rawManifest),
     data: validated.data,
     blobs,
+    encrypted,
   };
 }
 

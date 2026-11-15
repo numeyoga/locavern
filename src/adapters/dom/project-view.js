@@ -158,6 +158,18 @@ export function openProjectModal({ store, project }) {
 }
 
 /**
+ * Filter projects according to active/archived selection.
+ * @param {readonly Project[]} projects
+ * @param {'all' | 'active' | 'archived'} archiveFilter
+ * @returns {Project[]}
+ */
+export function filterProjectsByArchive(projects, archiveFilter) {
+  if (archiveFilter === 'active') return projects.filter((p) => !p.archived);
+  if (archiveFilter === 'archived') return projects.filter((p) => p.archived);
+  return [...projects];
+}
+
+/**
  * Render the Projects view inside #app-view.
  * @param {{
  *   container: HTMLElement;
@@ -165,19 +177,71 @@ export function openProjectModal({ store, project }) {
  *     getState: () => AppState;
  *     dispatch: (cmd: AppCommand) => { state: AppState; effects: StoreEffect[] };
  *   };
+ *   filters?: { archiveFilter: 'all' | 'active' | 'archived' };
  *   onOpenProjectNotes?: (projectId: string) => void;
+ *   onOpenProjectWhiteboards?: (projectId: string) => void;
  * }} opts
  */
-export function renderProjectsView({ container, store, onOpenProjectNotes }) {
+export function renderProjectsView({
+  container,
+  store,
+  filters = { archiveFilter: 'all' },
+  onOpenProjectNotes,
+  onOpenProjectWhiteboards,
+}) {
   const state = store.getState();
 
   const header = document.createElement('div');
   header.className = 'lc-view-header';
 
+  const leftGroup = document.createElement('div');
+  leftGroup.className = 'lc-view-header__group';
+
   const heading = document.createElement('h2');
   heading.className = 'cv-h2';
   heading.style.margin = '0';
   heading.textContent = 'Vos projets';
+  leftGroup.append(heading);
+
+  if (state.projects.length > 0) {
+    const filterSet = document.createElement('fieldset');
+    filterSet.className = 'cv-segmented';
+    filterSet.id = 'project-archive-filter';
+    const legend = document.createElement('legend');
+    legend.textContent = 'Filtrer par état du projet';
+    filterSet.append(legend);
+
+    /** @type {readonly { value: 'all' | 'active' | 'archived'; label: string }[]} */
+    const options = [
+      { value: 'all', label: 'Tous' },
+      { value: 'active', label: 'Actifs' },
+      { value: 'archived', label: 'Archivés' },
+    ];
+    for (const opt of options) {
+      const labelEl = document.createElement('label');
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'project-archive-filter';
+      radio.value = opt.value;
+      radio.checked = filters.archiveFilter === opt.value;
+      radio.addEventListener('change', () => {
+        if (!radio.checked) return;
+        filters.archiveFilter = opt.value;
+        renderProjectsView({
+          container,
+          store,
+          filters,
+          onOpenProjectNotes,
+          onOpenProjectWhiteboards,
+        });
+      });
+      const textSpan = document.createElement('span');
+      textSpan.textContent = opt.label;
+      labelEl.append(radio, textSpan);
+      filterSet.append(labelEl);
+    }
+    leftGroup.append(filterSet);
+  }
 
   const newBtn = document.createElement('button');
   newBtn.type = 'button';
@@ -190,7 +254,7 @@ export function renderProjectsView({ container, store, onOpenProjectNotes }) {
   newBtn.append(plusIcon, document.createTextNode(' Nouveau projet'));
   newBtn.addEventListener('click', () => openProjectModal({ store }));
 
-  header.append(heading, newBtn);
+  header.append(leftGroup, newBtn);
 
   if (state.projects.length === 0) {
     const empty = document.createElement('div');
@@ -221,10 +285,39 @@ export function renderProjectsView({ container, store, onOpenProjectNotes }) {
     return;
   }
 
+  const visibleProjects = filterProjectsByArchive(state.projects, filters.archiveFilter);
+  if (visibleProjects.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'cv-empty';
+    const title = document.createElement('p');
+    title.className = 'cv-empty__title';
+    title.textContent =
+      filters.archiveFilter === 'archived' ? 'Aucun projet archivé' : 'Aucun projet actif';
+
+    const resetBtn = document.createElement('button');
+    resetBtn.type = 'button';
+    resetBtn.className = 'cv-btn';
+    resetBtn.textContent = 'Afficher tous les projets';
+    resetBtn.addEventListener('click', () => {
+      filters.archiveFilter = 'all';
+      renderProjectsView({
+        container,
+        store,
+        filters,
+        onOpenProjectNotes,
+        onOpenProjectWhiteboards,
+      });
+    });
+
+    empty.append(title, resetBtn);
+    container.replaceChildren(header, empty);
+    return;
+  }
+
   const grid = document.createElement('div');
   grid.className = 'lc-projects-grid';
 
-  for (const project of state.projects) {
+  for (const project of visibleProjects) {
     const card = document.createElement('article');
     card.className = 'cv-card';
 
@@ -284,7 +377,21 @@ export function renderProjectsView({ container, store, onOpenProjectNotes }) {
       store.dispatch({ type: 'set_view', view: 'notes' });
     });
 
-    openGroup.append(openTasksBtn, openNotesBtn);
+    const openWhiteboardsBtn = document.createElement('button');
+    openWhiteboardsBtn.type = 'button';
+    openWhiteboardsBtn.className = 'cv-btn cv-btn--sm';
+    openWhiteboardsBtn.textContent = 'Ouvrir les tableaux blancs';
+    openWhiteboardsBtn.setAttribute('aria-label', `Ouvrir les tableaux blancs de ${project.name}`);
+    openWhiteboardsBtn.addEventListener('click', () => {
+      if (onOpenProjectWhiteboards) {
+        onOpenProjectWhiteboards(project.id);
+        return;
+      }
+      store.dispatch({ type: 'select_project', projectId: project.id });
+      store.dispatch({ type: 'set_view', view: 'whiteboards' });
+    });
+
+    openGroup.append(openTasksBtn, openNotesBtn, openWhiteboardsBtn);
 
     const actionsGroup = document.createElement('div');
     actionsGroup.className = 'lc-project-card__actions';
@@ -324,13 +431,18 @@ export function renderProjectsView({ container, store, onOpenProjectNotes }) {
     deleteBtn.addEventListener('click', async () => {
       const confirmed = await confirmAction({
         title: `Supprimer « ${project.name} » ?`,
-        message: `Ce projet et ses ${taskCount} tâche(s) seront supprimés. Les notes et tableaux blancs associés resteront accessibles sans projet.`,
+        message: `Ce projet et ses ${taskCount} tâche(s) seront déplacés dans la corbeille locale. Les notes et tableaux blancs associés resteront accessibles sans projet.`,
         confirmLabel: 'Supprimer le projet',
         danger: true,
       });
       if (!confirmed) return;
-      store.dispatch({ type: 'delete_project', id: project.id });
-      notify({ status: 'info', title: 'Projet supprimé', text: project.name });
+      store.dispatch({
+        type: 'trash_project',
+        id: project.id,
+        trashId: crypto.randomUUID(),
+        now: new Date().toISOString(),
+      });
+      notify({ status: 'info', title: 'Projet placé dans la corbeille', text: project.name });
     });
 
     actionsGroup.append(editBtn, archiveBtn, deleteBtn);

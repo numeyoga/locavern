@@ -1,7 +1,22 @@
-/** @import { ActiveView, AllowedImageMimeType, ChecklistItem, InputPresentation, InputPresentationMap, Note, Project, RichTextDoc, RichTextMark, RichTextNode, Task, TaskPriority, TaskStatus, TaskStatusConfig, Whiteboard, WhiteboardColorToken, WhiteboardElement, WhiteboardElementType, WhiteboardViewport } from '../types.d.ts' */
+/** @import { ActiveView, AllowedImageMimeType, ArrowEndpointBinding, ArrowSnapAnchor, ChecklistItem, LocalEntityKind, LocalRef, InputPresentation, InputPresentationMap, Note, Project, RichTextDoc, RichTextMark, RichTextNode, Task, TaskPriority, TaskRecurrence, TaskStatus, TaskStatusConfig, Whiteboard, WhiteboardColorToken, WhiteboardElement, WhiteboardElementType, WhiteboardViewport } from '../types.d.ts' */
+
+/** @type {readonly import('../types.d.ts').InputPresentationScreen[]} */
+export const INPUT_PRESENTATION_SCREENS = Object.freeze([
+  'tasks',
+  'projects',
+  'notes',
+  'whiteboards',
+]);
 
 /** @type {readonly ActiveView[]} */
-export const ACTIVE_VIEWS = Object.freeze(['tasks', 'projects', 'notes', 'whiteboards']);
+export const ACTIVE_VIEWS = Object.freeze([
+  'today',
+  'tasks',
+  'projects',
+  'calendar',
+  'notes',
+  'whiteboards',
+]);
 
 /** @type {readonly InputPresentation[]} */
 export const INPUT_PRESENTATIONS = Object.freeze(['drawer', 'modal']);
@@ -47,6 +62,36 @@ export function normalizeInputPresentations(raw) {
 export const DEFAULT_TOAST_DURATION_SECONDS = 6;
 export const MIN_TOAST_DURATION_SECONDS = 1;
 export const MAX_TOAST_DURATION_SECONDS = 60;
+
+export const DEFAULT_TRASH_RETENTION_DAYS = 30;
+export const MIN_TRASH_RETENTION_DAYS = 1;
+export const MAX_TRASH_RETENTION_DAYS = 365;
+
+/**
+ * Normalize trash retention delay in days (integer clamped between 1 and 365).
+ * @param {unknown} raw
+ * @returns {number}
+ */
+export function normalizeTrashRetentionDays(raw) {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+    return DEFAULT_TRASH_RETENTION_DAYS;
+  }
+  const rounded = Math.round(raw);
+  return Math.max(MIN_TRASH_RETENTION_DAYS, Math.min(MAX_TRASH_RETENTION_DAYS, rounded));
+}
+
+/**
+ * Compute expiration ISO timestamp by adding retention days to deletedAt.
+ * @param {string} deletedAtIso
+ * @param {number} retentionDays
+ * @returns {string}
+ */
+export function computeTrashExpiresAt(deletedAtIso, retentionDays) {
+  const baseMs = Date.parse(deletedAtIso);
+  const safeBase = Number.isNaN(baseMs) ? Date.now() : baseMs;
+  const days = normalizeTrashRetentionDays(retentionDays);
+  return new Date(safeBase + days * 86_400_000).toISOString();
+}
 
 /**
  * Normalize a toast auto-dismiss duration in seconds (integer clamped between 1 and 60).
@@ -174,6 +219,33 @@ export function getTaskStatusMeta(status, taskStatuses = DEFAULT_TASK_STATUSES) 
 
 /** @type {readonly TaskPriority[]} */
 export const TASK_PRIORITIES = Object.freeze(['low', 'medium', 'high']);
+
+/** @type {readonly TaskRecurrence[]} */
+export const TASK_RECURRENCES = Object.freeze(['daily', 'weekly', 'monthly']);
+
+/**
+ * Normalize an optional task recurrence cadence.
+ * @param {unknown} value
+ * @returns {TaskRecurrence | null}
+ */
+export function normalizeTaskRecurrence(value) {
+  if (value === 'daily' || value === 'weekly' || value === 'monthly') {
+    return value;
+  }
+  return null;
+}
+
+/**
+ * Return a human-readable French label for a task recurrence cadence.
+ * @param {TaskRecurrence | null | undefined} recurrence
+ * @returns {string}
+ */
+export function getTaskRecurrenceLabel(recurrence) {
+  if (recurrence === 'daily') return 'Quotidienne';
+  if (recurrence === 'weekly') return 'Hebdomadaire';
+  if (recurrence === 'monthly') return 'Mensuelle';
+  return '';
+}
 
 /** @type {ReadonlySet<AllowedImageMimeType>} */
 export const ALLOWED_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
@@ -569,6 +641,29 @@ export function stepWhiteboardElementLayer(elements, elementId, direction) {
  * @param {unknown} rawElements
  * @returns {readonly WhiteboardElement[]}
  */
+/** @type {readonly ArrowSnapAnchor[]} */
+const ARROW_SNAP_ANCHORS = Object.freeze(['center', 'top', 'right', 'bottom', 'left']);
+
+/**
+ * Sanitize an optional arrow endpoint binding.
+ * @param {unknown} raw
+ * @returns {ArrowEndpointBinding | undefined}
+ */
+function sanitizeArrowBinding(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const obj = /** @type {Record<string, unknown>} */ (raw);
+  const elementId = typeof obj.elementId === 'string' ? obj.elementId.trim() : '';
+  if (!elementId) return undefined;
+  const rawAnchor = /** @type {ArrowSnapAnchor} */ (obj.anchor);
+  const anchor = ARROW_SNAP_ANCHORS.includes(rawAnchor) ? rawAnchor : undefined;
+  return Object.freeze(anchor ? { elementId, anchor } : { elementId });
+}
+
+/**
+ * Sanitize and validate an array of whiteboard elements.
+ * @param {unknown} rawElements
+ * @returns {readonly WhiteboardElement[]}
+ */
 export function sanitizeWhiteboardElements(rawElements) {
   if (!Array.isArray(rawElements)) return [];
   /** @type {WhiteboardElement[]} */
@@ -654,6 +749,8 @@ export function sanitizeWhiteboardElements(rawElements) {
      *   zIndex: number;
      *   text?: string;
      *   points?: readonly (readonly [number, number])[];
+     *   startBinding?: ArrowEndpointBinding;
+     *   endBinding?: ArrowEndpointBinding;
      *   assetId?: string;
      * }} */
     const cleanEl = {
@@ -666,9 +763,14 @@ export function sanitizeWhiteboardElements(rawElements) {
       color,
       zIndex,
     };
+    const startBinding = type === 'arrow' ? sanitizeArrowBinding(el.startBinding) : undefined;
+    const endBinding = type === 'arrow' ? sanitizeArrowBinding(el.endBinding) : undefined;
+
     if (transparentBg) cleanEl.transparentBg = true;
     if (text !== undefined) cleanEl.text = text;
     if (points !== undefined) cleanEl.points = points;
+    if (startBinding !== undefined) cleanEl.startBinding = startBinding;
+    if (endBinding !== undefined) cleanEl.endBinding = endBinding;
     if (assetId !== undefined) cleanEl.assetId = assetId;
 
     out.push(Object.freeze(cleanEl));
@@ -722,6 +824,71 @@ export function createProject({ id, name, description = '', archived = false, no
 }
 
 /**
+ * Normalize a list of cross-cutting tags (trimmed, stripped of leading #, deduplicated case-insensitively).
+ * @param {unknown} rawTags
+ * @returns {readonly string[]}
+ */
+export function normalizeTags(rawTags) {
+  if (!Array.isArray(rawTags)) return Object.freeze([]);
+  /** @type {string[]} */
+  const out = [];
+  /** @type {Set<string>} */
+  const seenLower = new Set();
+  for (const entry of rawTags) {
+    if (typeof entry !== 'string') continue;
+    const cleaned = entry.trim().replace(/^#+/, '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (!cleaned) continue;
+    const key = cleaned.toLowerCase();
+    if (seenLower.has(key)) continue;
+    seenLower.add(key);
+    out.push(cleaned);
+    if (out.length >= 20) break;
+  }
+  return Object.freeze(out);
+}
+
+/** @type {ReadonlySet<LocalEntityKind>} */
+const LOCAL_ENTITY_KINDS = new Set(['task', 'note', 'whiteboard']);
+
+/**
+ * Normalize and deduplicate an array of internal local entity references, stripping self-links.
+ * @param {unknown} rawRefs
+ * @param {LocalRef | null} [selfRef]
+ * @returns {readonly LocalRef[]}
+ */
+export function normalizeLocalRefs(rawRefs, selfRef = null) {
+  if (!Array.isArray(rawRefs)) return Object.freeze([]);
+  /** @type {LocalRef[]} */
+  const out = [];
+  /** @type {Set<string>} */
+  const seen = new Set();
+  for (const entry of rawRefs) {
+    if (!entry || typeof entry !== 'object') continue;
+    const obj = /** @type {Record<string, unknown>} */ (entry);
+    const kind = /** @type {LocalEntityKind} */ (obj.kind);
+    if (!LOCAL_ENTITY_KINDS.has(kind)) continue;
+    const id = typeof obj.id === 'string' ? obj.id.trim() : '';
+    if (!id) continue;
+    if (selfRef && selfRef.kind === kind && selfRef.id === id) continue;
+    const key = `${kind}:${id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(Object.freeze({ kind, id }));
+    if (out.length >= 50) break;
+  }
+  return Object.freeze(out);
+}
+
+/**
+ * Parse a comma-separated tag input string into normalized tags.
+ * @param {string} rawText
+ * @returns {readonly string[]}
+ */
+export function parseTagsInput(rawText) {
+  return normalizeTags(String(rawText).split(/[,;]/));
+}
+
+/**
  * Create a validated Task record.
  * @param {{
  *   id: string;
@@ -730,9 +897,12 @@ export function createProject({ id, name, description = '', archived = false, no
  *   status?: TaskStatus | null;
  *   priority?: TaskPriority;
  *   dueDate?: string | null;
+ *   recurrence?: TaskRecurrence | null;
  *   position?: number;
  *   descriptionDoc?: RichTextDoc;
  *   checklist?: readonly ChecklistItem[];
+ *   tags?: readonly string[];
+ *   links?: readonly LocalRef[];
  *   assetIds?: readonly string[];
  *   allowedStatuses?: readonly string[];
  *   now: string;
@@ -746,9 +916,12 @@ export function createTask({
   status = 'todo',
   priority = 'medium',
   dueDate = null,
+  recurrence = null,
   position = 0,
   descriptionDoc,
   checklist = [],
+  tags = [],
+  links = [],
   assetIds,
   allowedStatuses = TASK_STATUSES,
   now,
@@ -770,6 +943,7 @@ export function createTask({
     throw new Error(`Priorité de tâche invalide : ${priority}.`);
   }
 
+  const cleanRecurrence = normalizeTaskRecurrence(recurrence);
   const cleanDoc = sanitizeRichTextDoc(descriptionDoc);
   const derivedAssetIds = collectDocAssetIds(cleanDoc);
   const mergedAssets = [...new Set([...(assetIds ?? []), ...derivedAssetIds])];
@@ -781,9 +955,12 @@ export function createTask({
     status: cleanStatus,
     priority,
     dueDate: normalizeDueDate(dueDate),
+    ...(cleanRecurrence ? { recurrence: cleanRecurrence } : {}),
     position: Number.isFinite(position) && position >= 0 ? Math.trunc(position) : 0,
     descriptionDoc: cleanDoc,
     checklist: normalizeChecklist(checklist),
+    tags: normalizeTags(tags),
+    links: normalizeLocalRefs(links, { kind: 'task', id: cleanId }),
     assetIds: mergedAssets,
     createdAt: now,
     updatedAt: now,
@@ -797,12 +974,23 @@ export function createTask({
  *   projectId: string | null;
  *   title: string;
  *   contentDoc?: RichTextDoc;
+ *   tags?: readonly string[];
+ *   links?: readonly LocalRef[];
  *   assetIds?: readonly string[];
  *   now: string;
  * }} input
  * @returns {Note}
  */
-export function createNote({ id, projectId, title, contentDoc, assetIds, now }) {
+export function createNote({
+  id,
+  projectId,
+  title,
+  contentDoc,
+  tags = [],
+  links = [],
+  assetIds,
+  now,
+}) {
   const cleanId = id.trim();
   const cleanTitle = title.trim();
   if (!cleanId) throw new Error('Identifiant de note requis.');
@@ -819,6 +1007,8 @@ export function createNote({ id, projectId, title, contentDoc, assetIds, now }) 
     projectId: projectId ? projectId.trim() : null,
     title: cleanTitle,
     contentDoc: cleanDoc,
+    tags: normalizeTags(tags),
+    links: normalizeLocalRefs(links, { kind: 'note', id: cleanId }),
     assetIds: mergedAssets,
     createdAt: now,
     updatedAt: now,
@@ -833,12 +1023,22 @@ export function createNote({ id, projectId, title, contentDoc, assetIds, now }) 
  *   title: string;
  *   viewport?: WhiteboardViewport;
  *   elements?: readonly WhiteboardElement[];
+ *   links?: readonly LocalRef[];
  *   assetIds?: readonly string[];
  *   now: string;
  * }} input
  * @returns {Whiteboard}
  */
-export function createWhiteboard({ id, projectId, title, viewport, elements, assetIds, now }) {
+export function createWhiteboard({
+  id,
+  projectId,
+  title,
+  viewport,
+  elements,
+  links = [],
+  assetIds,
+  now,
+}) {
   const cleanId = id.trim();
   const cleanTitle = title.trim();
   if (!cleanId) throw new Error('Identifiant de tableau blanc requis.');
@@ -860,6 +1060,7 @@ export function createWhiteboard({ id, projectId, title, viewport, elements, ass
     title: cleanTitle,
     viewport: cleanViewport,
     elements: cleanElements,
+    links: normalizeLocalRefs(links, { kind: 'whiteboard', id: cleanId }),
     assetIds: mergedAssets,
     createdAt: now,
     updatedAt: now,

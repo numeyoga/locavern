@@ -49,11 +49,12 @@ test.describe('CSP stricte & fonctionnement hors ligne PWA (Étape 6)', () => {
       }
     });
 
-    // Créer un projet en ligne puis passer complètement hors ligne
+    // Créer un projet en ligne, attendre la fin d’écriture IndexedDB puis passer hors ligne
     await page.getByRole('button', { name: 'Créer un projet' }).click();
     await page.locator('#project-name-input').fill('Hors ligne');
     await page.locator('#modal-project button[type="submit"]').click();
     await expect(page.locator('#task-project-filter')).toContainText('Hors ligne');
+    await expect(page.locator('html')).not.toHaveAttribute('data-persisting', 'true');
 
     await context.setOffline(true);
     await page.reload();
@@ -65,5 +66,47 @@ test.describe('CSP stricte & fonctionnement hors ligne PWA (Étape 6)', () => {
     await page.locator('[data-nav-view="projects"]').click();
     await expect(page.getByRole('heading', { name: 'Hors ligne' })).toBeVisible();
     expect(externalRequests).toEqual([]);
+  });
+
+  test('affiche une notification invitant à recharger lorsqu’une mise à jour du Service Worker est prête', async ({
+    page,
+  }) => {
+    /** @type {string[]} */
+    const pageErrors = [];
+    page.on('pageerror', (err) => pageErrors.push(err.message));
+
+    await page.goto('/');
+
+    await page.evaluate(async () => {
+      await navigator.serviceWorker.ready;
+      if (!navigator.serviceWorker.controller) {
+        await new Promise((resolve) => {
+          navigator.serviceWorker.addEventListener('controllerchange', () => resolve(undefined), {
+            once: true,
+          });
+        });
+      }
+    });
+
+    await expect(page.locator('#sw-update-banner')).toHaveCount(0);
+
+    // Enregistrer une nouvelle URL du Service Worker sur la même portée pour simuler une mise à jour prête en attente
+    await page.evaluate(async () => {
+      await navigator.serviceWorker.register('./sw.js?v=2', { scope: './' });
+    });
+
+    const banner = page.locator('#sw-update-banner');
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText('Nouvelle version prête hors ligne');
+
+    await Promise.all([page.waitForEvent('load'), page.locator('#btn-sw-reload').click()]);
+
+    await expect(page.locator('#sw-update-banner')).toHaveCount(0);
+    await expect(page.locator('#topbar-title')).toHaveText('Tâches');
+    const controllerUrl = await page.evaluate(
+      () => navigator.serviceWorker.controller?.scriptURL ?? '',
+    );
+    expect(controllerUrl).toContain('sw.js?v=2');
+    expect(pageErrors).toEqual([]);
   });
 });

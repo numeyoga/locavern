@@ -6,6 +6,7 @@ import {
   collectDocAssetIds,
   collectWhiteboardAssetIds,
   normalizeDueDate,
+  normalizeTaskRecurrence,
   normalizeTaskStatuses,
   sanitizeRichTextDoc,
   sanitizeWhiteboardElements,
@@ -108,6 +109,7 @@ function parseTask(raw) {
     return null;
   }
 
+  const recurrence = normalizeTaskRecurrence(raw.recurrence);
   const checklist = parseChecklist(raw.checklist);
   if (!checklist) return null;
 
@@ -124,6 +126,7 @@ function parseTask(raw) {
     status,
     priority,
     dueDate,
+    ...(recurrence ? { recurrence } : {}),
     position: typeof raw.position === 'number' && raw.position >= 0 ? Math.trunc(raw.position) : 0,
     descriptionDoc,
     checklist,

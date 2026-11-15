@@ -1,4 +1,4 @@
-/** @import { WhiteboardColorToken, WhiteboardElement, WhiteboardElementType, WhiteboardViewport } from '../types.d.ts' */
+/** @import { ArrowEndpointBinding, WhiteboardColorToken, WhiteboardElement, WhiteboardElementType, WhiteboardViewport } from '../types.d.ts' */
 
 import {
   DEFAULT_WHITEBOARD_VIEWPORT,
@@ -9,6 +9,21 @@ import {
   stepWhiteboardElementLayer,
   whiteboardElementSupportsBackground,
 } from '../core/model.js';
+import {
+  DEFAULT_WHITEBOARD_GRID_SIZE,
+  buildArrowGeometry,
+  computeFitViewport,
+  detachUnfollowedArrowBindings,
+  duplicateWhiteboardElements,
+  findArrowSnapTarget,
+  getArrowWorldEndpoints,
+  intersectRayWithElementBorder,
+  recomputeBoundArrows,
+  selectElementsInMarquee,
+  snapPointToGrid,
+  snapValueToGrid,
+  stepValueWithGrid,
+} from '../core/whiteboard.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MAX_HISTORY = 50;
@@ -139,7 +154,8 @@ function describeElement(el) {
   const typeLabel = TYPE_LABELS[el.type] ?? el.type;
   const textSnippet = el.text ? ` : « ${el.text.slice(0, 60)} »` : '';
   const bgHint = el.transparentBg ? ', fond transparent' : '';
-  return `${typeLabel}${textSnippet}${bgHint}, position ${Math.round(el.x)}, ${Math.round(el.y)}, taille ${Math.round(el.width)} par ${Math.round(el.height)}`;
+  const boundHint = el.type === 'arrow' && (el.startBinding || el.endBinding) ? ', aimantée' : '';
+  return `${typeLabel}${textSnippet}${bgHint}${boundHint}, position ${Math.round(el.x)}, ${Math.round(el.y)}, taille ${Math.round(el.width)} par ${Math.round(el.height)}`;
 }
 
 /**
@@ -238,8 +254,9 @@ function measureImageUrl(url) {
 
 /**
  * Mount a native interactive SVG whiteboard canvas with Covenant toolbar,
- * full keyboard accessibility (WCAG 2.2 AA), undo/redo, zoom/pan, local image upload,
- * remote image paste blocking, and standalone SVG/PNG export.
+ * full keyboard accessibility (WCAG 2.2 AA), multi-selection, duplication (Ctrl+D),
+ * undo/redo, zoom/pan/fit-to-view, local image upload, remote image paste blocking,
+ * and standalone SVG/PNG export.
  * @param {{
  *   container: HTMLElement;
  *   initialViewport: WhiteboardViewport;
@@ -276,13 +293,20 @@ export function mountWhiteboardCanvas({
   /** @type {WhiteboardElement[]} */
   let elements = [...sanitizeWhiteboardElements(initialElements ?? [])];
 
-  /** @type {'select' | WhiteboardElementType} */
+  /** @type {'select' | 'marquee' | WhiteboardElementType} */
   let activeTool = 'select';
   /** @type {WhiteboardColorToken} */
   let activeColor = 'accent';
   let activeTransparentBg = false;
+  let gridVisible = true;
+  let snapToGrid = false;
+  const GRID_SIZE = DEFAULT_WHITEBOARD_GRID_SIZE;
+  const MAJOR_GRID_SIZE = GRID_SIZE * 5;
+  /** @type {Set<string>} */
+  let selectedIds = new Set(elements[0]?.id ? [elements[0].id] : []);
   /** @type {string | null} */
-  let selectedId = elements[0]?.id ?? null;
+  let primarySelectedId = elements[0]?.id ?? null;
+  let handlingElementPointer = false;
 
   /** @type {WhiteboardElement[][]} */
   let historyPast = [];
@@ -322,12 +346,13 @@ export function mountWhiteboardCanvas({
   toolbar.setAttribute('role', 'toolbar');
   toolbar.setAttribute('aria-label', 'Outils du tableau blanc');
 
-  /** @type {Map<'select' | WhiteboardElementType, HTMLButtonElement>} */
+  /** @type {Map<'select' | 'marquee' | WhiteboardElementType, HTMLButtonElement>} */
   const toolButtons = new Map();
 
-  /** @type {Array<{ tool: 'select' | WhiteboardElementType; label: string; icon: string }>} */
+  /** @type {Array<{ tool: 'select' | 'marquee' | WhiteboardElementType; label: string; icon: string }>} */
   const toolSpecs = [
     { tool: 'select', label: 'Sélectionner', icon: 'ph-cursor' },
+    { tool: 'marquee', label: 'Sélection par zone', icon: 'ph-selection' },
     { tool: 'sticky', label: 'Post-it', icon: 'ph-note' },
     { tool: 'rect', label: 'Rectangle', icon: 'ph-rectangle' },
     { tool: 'ellipse', label: 'Ellipse', icon: 'ph-circle' },
@@ -351,11 +376,11 @@ export function mountWhiteboardCanvas({
       setActiveTool(spec.tool);
     });
     btn.addEventListener('dblclick', () => {
-      if (!editable || spec.tool === 'select') return;
+      if (!editable || spec.tool === 'select' || spec.tool === 'marquee') return;
       insertDefaultElementAtCenter(spec.tool);
     });
     btn.addEventListener('keydown', (e) => {
-      if (!editable || spec.tool === 'select') return;
+      if (!editable || spec.tool === 'select' || spec.tool === 'marquee') return;
       if (e.key === 'Enter' && activeTool === spec.tool) {
         e.preventDefault();
         insertDefaultElementAtCenter(spec.tool);
@@ -373,7 +398,7 @@ export function mountWhiteboardCanvas({
   });
   addCenterBtn.addEventListener('click', () => {
     if (!editable) return;
-    const typeToAdd = activeTool === 'select' ? 'sticky' : activeTool;
+    const typeToAdd = activeTool === 'select' || activeTool === 'marquee' ? 'sticky' : activeTool;
     insertDefaultElementAtCenter(typeToAdd);
   });
 
@@ -422,11 +447,11 @@ export function mountWhiteboardCanvas({
     btn.addEventListener('click', () => {
       if (!editable) return;
       activeColor = colorToken;
-      if (selectedId) {
-        const target = elements.find((el) => el.id === selectedId);
-        if (target && target.color !== colorToken) {
+      if (selectedIds.size > 0) {
+        const hasDiff = elements.some((el) => selectedIds.has(el.id) && el.color !== colorToken);
+        if (hasDiff) {
           commitElements(
-            elements.map((el) => (el.id === selectedId ? { ...el, color: colorToken } : el)),
+            elements.map((el) => (selectedIds.has(el.id) ? { ...el, color: colorToken } : el)),
           );
           announce(`Couleur ${COLOR_LABELS[colorToken]} appliquée`);
         }
@@ -446,13 +471,17 @@ export function mountWhiteboardCanvas({
   transparentBgBtn.title = 'Fond transparent (permet d’encadrer un autre élément)';
   transparentBgBtn.addEventListener('click', () => {
     if (!editable) return;
-    const selected = selectedId ? elements.find((el) => el.id === selectedId) : undefined;
-    if (selected && whiteboardElementSupportsBackground(selected.type)) {
-      const nextTransparent = !selected.transparentBg;
+    const bgTargets = elements.filter(
+      (el) => selectedIds.has(el.id) && whiteboardElementSupportsBackground(el.type),
+    );
+    if (bgTargets.length > 0) {
+      const allTransparent = bgTargets.every((el) => Boolean(el.transparentBg));
+      const nextTransparent = !allTransparent;
       activeTransparentBg = nextTransparent;
+      const targetIds = new Set(bgTargets.map((el) => el.id));
       commitElements(
         elements.map((el) =>
-          el.id === selectedId ? { ...el, transparentBg: nextTransparent ? true : undefined } : el,
+          targetIds.has(el.id) ? { ...el, transparentBg: nextTransparent ? true : undefined } : el,
         ),
       );
       announce(nextTransparent ? 'Fond transparent activé' : 'Fond rempli activé');
@@ -478,11 +507,20 @@ export function mountWhiteboardCanvas({
     action: 'edit-text',
   });
   editTextBtn.addEventListener('click', () => {
-    if (!editable || !selectedId) return;
-    const target = elements.find((el) => el.id === selectedId);
+    if (!editable || selectedIds.size !== 1 || !primarySelectedId) return;
+    const target = elements.find((el) => el.id === primarySelectedId);
     if (target && supportsText(target.type)) {
       openTextEditor(target);
     }
+  });
+
+  const duplicateElBtn = createToolbarBtn({
+    icon: 'ph-copy',
+    label: 'Dupliquer (Ctrl+D)',
+    action: 'duplicate-selected',
+  });
+  duplicateElBtn.addEventListener('click', () => {
+    duplicateSelected();
   });
 
   const bringForwardBtn = createToolbarBtn({
@@ -492,7 +530,7 @@ export function mountWhiteboardCanvas({
   });
   bringForwardBtn.title = 'Avancer d’un niveau (Page précédente)';
   bringForwardBtn.addEventListener('click', () => {
-    if (editable && selectedId) {
+    if (editable && selectedIds.size === 1 && primarySelectedId) {
       stepSelectedLayer(1);
     }
   });
@@ -504,23 +542,23 @@ export function mountWhiteboardCanvas({
   });
   sendBackwardBtn.title = 'Reculer d’un niveau (Page suivante)';
   sendBackwardBtn.addEventListener('click', () => {
-    if (editable && selectedId) {
+    if (editable && selectedIds.size === 1 && primarySelectedId) {
       stepSelectedLayer(-1);
     }
   });
 
   const deleteElBtn = createToolbarBtn({
     icon: 'ph-trash',
-    label: 'Supprimer l’élément',
+    label: 'Supprimer la sélection',
     action: 'delete-selected',
   });
   deleteElBtn.addEventListener('click', () => {
-    if (editable && selectedId) {
-      deleteElementById(selectedId);
+    if (editable && selectedIds.size > 0) {
+      deleteSelectedElements();
     }
   });
 
-  selectionGroup.append(editTextBtn, bringForwardBtn, sendBackwardBtn, deleteElBtn);
+  selectionGroup.append(editTextBtn, duplicateElBtn, bringForwardBtn, sendBackwardBtn, deleteElBtn);
 
   // History actions
   const historyGroup = document.createElement('div');
@@ -541,6 +579,44 @@ export function mountWhiteboardCanvas({
   redoBtn.addEventListener('click', () => redo());
 
   historyGroup.append(undoBtn, redoBtn);
+
+  // Grid & alignment snap controls
+  const gridGroup = document.createElement('div');
+  gridGroup.className = 'lc-wb-toolbar__group';
+
+  const gridBtn = createToolbarBtn({
+    icon: 'ph-grid-four',
+    label: 'Afficher la grille d’alignement',
+    action: 'toggle-grid',
+    toggle: true,
+  });
+  gridBtn.title = 'Afficher ou masquer la grille d’alignement';
+  gridBtn.addEventListener('click', () => {
+    gridVisible = !gridVisible;
+    syncGridDisplay();
+    syncToolbarState();
+    announce(gridVisible ? 'Grille d’alignement affichée' : 'Grille d’alignement masquée');
+  });
+
+  const snapBtn = createToolbarBtn({
+    icon: 'ph-magnet',
+    label: 'Magnétisme sur la grille',
+    action: 'toggle-snap',
+    toggle: true,
+  });
+  snapBtn.title = `Magnétisme sur la grille (pas de ${GRID_SIZE} px)`;
+  snapBtn.addEventListener('click', () => {
+    if (!editable) return;
+    snapToGrid = !snapToGrid;
+    syncToolbarState();
+    announce(
+      snapToGrid
+        ? `Magnétisme sur la grille activé (${GRID_SIZE} px)`
+        : 'Magnétisme sur la grille désactivé',
+    );
+  });
+
+  gridGroup.append(gridBtn, snapBtn);
 
   // Zoom controls (always available even in read-only mode)
   const zoomGroup = document.createElement('div');
@@ -571,12 +647,22 @@ export function mountWhiteboardCanvas({
   });
   zoomInBtn.addEventListener('click', () => applyZoomDelta(0.2));
 
-  zoomGroup.append(zoomOutBtn, zoomResetBtn, zoomInBtn);
+  const fitViewBtn = createToolbarBtn({
+    icon: 'ph-frame-corners',
+    label: 'Ajuster à la vue',
+    action: 'fit-to-view',
+  });
+  fitViewBtn.addEventListener('click', () => {
+    fitToView();
+  });
+
+  zoomGroup.append(zoomOutBtn, zoomResetBtn, zoomInBtn, fitViewBtn);
 
   if (editable) {
-    toolbar.append(toolsGroup, colorGroup, selectionGroup, historyGroup, zoomGroup);
+    toolbar.append(toolsGroup, colorGroup, selectionGroup, historyGroup, gridGroup, zoomGroup);
   } else {
-    toolbar.append(zoomGroup);
+    gridGroup.replaceChildren(gridBtn);
+    toolbar.append(gridGroup, zoomGroup);
   }
 
   // Inline accessible text editor bar (shown on Enter / F2 / double-click / button)
@@ -645,8 +731,47 @@ export function mountWhiteboardCanvas({
     defs.append(marker);
   }
 
+  const minorGridPattern = /** @type {SVGPatternElement} */ (
+    document.createElementNS(SVG_NS, 'pattern')
+  );
+  minorGridPattern.id = `${uid}-grid-minor`;
+  minorGridPattern.setAttribute('width', String(GRID_SIZE));
+  minorGridPattern.setAttribute('height', String(GRID_SIZE));
+  minorGridPattern.setAttribute('patternUnits', 'userSpaceOnUse');
+  const minorGridPath = /** @type {SVGPathElement} */ (document.createElementNS(SVG_NS, 'path'));
+  minorGridPath.setAttribute('d', `M ${GRID_SIZE} 0 L 0 0 0 ${GRID_SIZE}`);
+  minorGridPath.classList.add('lc-wb-grid-line', 'lc-wb-grid-line--minor');
+  minorGridPattern.append(minorGridPath);
+
+  const majorGridPattern = /** @type {SVGPatternElement} */ (
+    document.createElementNS(SVG_NS, 'pattern')
+  );
+  majorGridPattern.id = `${uid}-grid-major`;
+  majorGridPattern.setAttribute('width', String(MAJOR_GRID_SIZE));
+  majorGridPattern.setAttribute('height', String(MAJOR_GRID_SIZE));
+  majorGridPattern.setAttribute('patternUnits', 'userSpaceOnUse');
+  const majorFillRect = /** @type {SVGRectElement} */ (document.createElementNS(SVG_NS, 'rect'));
+  majorFillRect.setAttribute('width', String(MAJOR_GRID_SIZE));
+  majorFillRect.setAttribute('height', String(MAJOR_GRID_SIZE));
+  majorFillRect.setAttribute('fill', `url(#${uid}-grid-minor)`);
+  const majorGridPath = /** @type {SVGPathElement} */ (document.createElementNS(SVG_NS, 'path'));
+  majorGridPath.setAttribute('d', `M ${MAJOR_GRID_SIZE} 0 L 0 0 0 ${MAJOR_GRID_SIZE}`);
+  majorGridPath.classList.add('lc-wb-grid-line', 'lc-wb-grid-line--major');
+  majorGridPattern.append(majorFillRect, majorGridPath);
+  defs.append(minorGridPattern, majorGridPattern);
+
   const worldGroup = /** @type {SVGGElement} */ (document.createElementNS(SVG_NS, 'g'));
   worldGroup.classList.add('lc-wb-world');
+
+  const gridLayer = /** @type {SVGRectElement} */ (document.createElementNS(SVG_NS, 'rect'));
+  gridLayer.classList.add('lc-wb-grid-layer');
+  gridLayer.setAttribute('x', '-12000');
+  gridLayer.setAttribute('y', '-12000');
+  gridLayer.setAttribute('width', '24000');
+  gridLayer.setAttribute('height', '24000');
+  gridLayer.setAttribute('fill', `url(#${uid}-grid-major)`);
+  gridLayer.setAttribute('pointer-events', 'none');
+  gridLayer.setAttribute('aria-hidden', 'true');
 
   const elementsLayer = /** @type {SVGGElement} */ (document.createElementNS(SVG_NS, 'g'));
   elementsLayer.classList.add('lc-wb-elements');
@@ -654,7 +779,7 @@ export function mountWhiteboardCanvas({
   const draftLayer = /** @type {SVGGElement} */ (document.createElementNS(SVG_NS, 'g'));
   draftLayer.classList.add('lc-wb-draft');
 
-  worldGroup.append(elementsLayer, draftLayer);
+  worldGroup.append(gridLayer, elementsLayer, draftLayer);
   svg.append(defs, worldGroup);
   stage.append(svg);
 
@@ -708,6 +833,15 @@ export function mountWhiteboardCanvas({
     setViewport({ panX: nextPanX, panY: nextPanY, zoom: nextZoom });
   }
 
+  function fitToView() {
+    const rect = stage.getBoundingClientRect();
+    const nextVp = computeFitViewport(elements, rect.width || 800, rect.height || 520, 48);
+    setViewport(nextVp);
+    announce(
+      elements.length > 0 ? 'Vue ajustée au contenu du tableau' : 'Vue réinitialisée à 100 %',
+    );
+  }
+
   /**
    * Convert client pointer coordinates into SVG world coordinates.
    * @param {number} clientX
@@ -738,6 +872,15 @@ export function mountWhiteboardCanvas({
     };
   }
 
+  function pruneSelectionToElements() {
+    const validIds = new Set(elements.map((el) => el.id));
+    const pruned = new Set([...selectedIds].filter((id) => validIds.has(id)));
+    selectedIds = pruned;
+    if (!primarySelectedId || !pruned.has(primarySelectedId)) {
+      primarySelectedId = pruned.values().next().value ?? null;
+    }
+  }
+
   /**
    * Commit a new elements snapshot and push previous snapshot onto undo stack.
    * @param {WhiteboardElement[]} nextElements
@@ -745,10 +888,10 @@ export function mountWhiteboardCanvas({
   function commitElements(nextElements) {
     historyPast = [...historyPast.slice(-(MAX_HISTORY - 1)), elements];
     historyFuture = [];
-    elements = [...sanitizeWhiteboardElements(nextElements)];
-    if (selectedId && !elements.some((el) => el.id === selectedId)) {
-      selectedId = elements[0]?.id ?? null;
-    }
+    const sanitized = sanitizeWhiteboardElements(nextElements);
+    const recomputed = recomputeBoundArrows(sanitized);
+    elements = [...sanitizeWhiteboardElements(recomputed)];
+    pruneSelectionToElements();
     renderElements();
     syncToolbarState();
     emitChange();
@@ -761,9 +904,7 @@ export function mountWhiteboardCanvas({
     historyPast = historyPast.slice(0, -1);
     historyFuture = [elements, ...historyFuture.slice(0, MAX_HISTORY - 1)];
     elements = [...prev];
-    if (selectedId && !elements.some((el) => el.id === selectedId)) {
-      selectedId = elements[0]?.id ?? null;
-    }
+    pruneSelectionToElements();
     renderElements();
     syncToolbarState();
     emitChange();
@@ -777,28 +918,41 @@ export function mountWhiteboardCanvas({
     historyFuture = historyFuture.slice(1);
     historyPast = [...historyPast.slice(-(MAX_HISTORY - 1)), elements];
     elements = [...next];
-    if (selectedId && !elements.some((el) => el.id === selectedId)) {
-      selectedId = elements[0]?.id ?? null;
-    }
+    pruneSelectionToElements();
     renderElements();
     syncToolbarState();
     emitChange();
     announce('Action rétablie');
   }
 
-  /** @param {'select' | WhiteboardElementType} tool */
+  /** @param {'select' | 'marquee' | WhiteboardElementType} tool */
   function setActiveTool(tool) {
     activeTool = tool;
-    if (tool !== 'select' && selectedId !== null) {
-      setSelectedId(null);
+    if (tool !== 'select' && tool !== 'marquee' && selectedIds.size > 0) {
+      setSelection([], null);
       return;
     }
     syncToolbarState();
   }
 
+  function syncGridDisplay() {
+    root.dataset.wbGrid = String(gridVisible);
+    gridLayer.style.display = gridVisible ? '' : 'none';
+    if (gridVisible) {
+      gridLayer.removeAttribute('visibility');
+    } else {
+      gridLayer.setAttribute('visibility', 'hidden');
+    }
+  }
+
   function syncToolbarState() {
     root.dataset.wbActiveTool = activeTool;
-    const centerType = activeTool === 'select' ? 'sticky' : activeTool;
+    root.dataset.wbGrid = String(gridVisible);
+    root.dataset.wbSnap = String(snapToGrid);
+    gridBtn.setAttribute('aria-pressed', String(gridVisible));
+    snapBtn.disabled = !editable;
+    snapBtn.setAttribute('aria-pressed', String(snapToGrid));
+    const centerType = activeTool === 'select' || activeTool === 'marquee' ? 'sticky' : activeTool;
     addCenterBtn.title = `Ajouter (${TYPE_LABELS[centerType]}) au centre de la vue, sans glisser-déposer`;
     for (const [tool, btn] of toolButtons) {
       btn.setAttribute('aria-pressed', String(tool === activeTool));
@@ -806,23 +960,31 @@ export function mountWhiteboardCanvas({
     for (const [colorToken, btn] of colorButtons) {
       btn.setAttribute('aria-checked', String(colorToken === activeColor));
     }
-    const selected = selectedId ? elements.find((el) => el.id === selectedId) : undefined;
+    const selectedEls = elements.filter((el) => selectedIds.has(el.id));
+    const selectedCount = selectedEls.length;
+    const primary =
+      (primarySelectedId ? elements.find((el) => el.id === primarySelectedId) : undefined) ??
+      selectedEls[0];
+    const bgTargets = selectedEls.filter((el) => whiteboardElementSupportsBackground(el.type));
     const isBgTransparent =
-      selected && whiteboardElementSupportsBackground(selected.type)
-        ? Boolean(selected.transparentBg)
+      bgTargets.length > 0
+        ? bgTargets.every((el) => Boolean(el.transparentBg))
         : activeTransparentBg;
     transparentBgBtn.disabled = !editable;
     transparentBgBtn.setAttribute('aria-pressed', String(isBgTransparent));
-    const layerBounds = selected
-      ? getWhiteboardElementLayerBounds(elements, selected.id)
-      : { canBringForward: false, canSendBackward: false };
-    editTextBtn.disabled = !editable || !selected || !supportsText(selected.type);
+    const layerBounds =
+      selectedCount === 1 && primary
+        ? getWhiteboardElementLayerBounds(elements, primary.id)
+        : { canBringForward: false, canSendBackward: false };
+    editTextBtn.disabled =
+      !editable || selectedCount !== 1 || !primary || !supportsText(primary.type);
+    duplicateElBtn.disabled = !editable || selectedCount === 0;
     bringForwardBtn.disabled = !editable || !layerBounds.canBringForward;
     sendBackwardBtn.disabled = !editable || !layerBounds.canSendBackward;
-    deleteElBtn.disabled = !editable || !selected;
+    deleteElBtn.disabled = !editable || selectedCount === 0;
+    zoomResetBtn.textContent = `${Math.round(viewport.zoom * 100)} %`;
     undoBtn.disabled = !editable || historyPast.length === 0;
     redoBtn.disabled = !editable || historyFuture.length === 0;
-    zoomResetBtn.textContent = `${Math.round(viewport.zoom * 100)} %`;
   }
 
   /** @returns {number} */
@@ -844,13 +1006,15 @@ export function mountWhiteboardCanvas({
   function buildDefaultElement(type, cx, cy) {
     const id = crypto.randomUUID();
     const zIndex = nextZIndex();
+    const snapCoord = (/** @type {number} */ val) =>
+      clamp(snapValueToGrid(val, GRID_SIZE, snapToGrid), -10000, 10000);
     switch (type) {
       case 'sticky':
         return {
           id,
           type: 'sticky',
-          x: Math.round(cx - 90),
-          y: Math.round(cy - 60),
+          x: snapCoord(cx - 90),
+          y: snapCoord(cy - 60),
           width: 180,
           height: 120,
           text: 'Post-it',
@@ -862,8 +1026,8 @@ export function mountWhiteboardCanvas({
         return {
           id,
           type: 'rect',
-          x: Math.round(cx - 80),
-          y: Math.round(cy - 50),
+          x: snapCoord(cx - 80),
+          y: snapCoord(cy - 50),
           width: 160,
           height: 100,
           text: '',
@@ -875,8 +1039,8 @@ export function mountWhiteboardCanvas({
         return {
           id,
           type: 'ellipse',
-          x: Math.round(cx - 75),
-          y: Math.round(cy - 50),
+          x: snapCoord(cx - 75),
+          y: snapCoord(cy - 50),
           width: 150,
           height: 100,
           text: '',
@@ -888,8 +1052,8 @@ export function mountWhiteboardCanvas({
         return {
           id,
           type: 'arrow',
-          x: Math.round(cx - 70),
-          y: Math.round(cy - 20),
+          x: snapCoord(cx - 70),
+          y: snapCoord(cy - 20),
           width: 140,
           height: 40,
           color: activeColor,
@@ -903,8 +1067,8 @@ export function mountWhiteboardCanvas({
         return {
           id,
           type: 'text',
-          x: Math.round(cx - 80),
-          y: Math.round(cy - 24),
+          x: snapCoord(cx - 80),
+          y: snapCoord(cy - 24),
           width: 160,
           height: 48,
           text: 'Texte',
@@ -915,8 +1079,8 @@ export function mountWhiteboardCanvas({
         return {
           id,
           type: 'path',
-          x: Math.round(cx - 60),
-          y: Math.round(cy - 20),
+          x: snapCoord(cx - 60),
+          y: snapCoord(cy - 20),
           width: 120,
           height: 40,
           color: activeColor,
@@ -932,8 +1096,8 @@ export function mountWhiteboardCanvas({
         return {
           id,
           type: 'rect',
-          x: Math.round(cx - 80),
-          y: Math.round(cy - 50),
+          x: snapCoord(cx - 80),
+          y: snapCoord(cy - 50),
           width: 160,
           height: 100,
           color: activeColor,
@@ -948,13 +1112,31 @@ export function mountWhiteboardCanvas({
    */
   function insertDefaultElementAtCenter(type) {
     const center = getViewportCenterWorld();
-    const offset = (elements.length % 5) * 16;
+    const offset = (elements.length % 5) * (snapToGrid ? GRID_SIZE : 16);
     const el = buildDefaultElement(type, center.x + offset, center.y + offset);
-    selectedId = el.id;
+    selectedIds = new Set([el.id]);
+    primarySelectedId = el.id;
     commitElements([...elements, el]);
     const node = renderedGroups.get(el.id);
     node?.focus({ preventScroll: true });
     announce(`${TYPE_LABELS[el.type]} ajouté au tableau`);
+  }
+
+  function duplicateSelected() {
+    if (!editable || selectedIds.size === 0) return;
+    const { nextElements, createdIds } = duplicateWhiteboardElements(elements, selectedIds, {
+      snapGridSize: snapToGrid ? GRID_SIZE : 0,
+    });
+    if (createdIds.length === 0) return;
+    selectedIds = new Set(createdIds);
+    primarySelectedId = createdIds[0] ?? null;
+    commitElements(nextElements);
+    if (primarySelectedId) {
+      renderedGroups.get(primarySelectedId)?.focus({ preventScroll: true });
+    }
+    announce(
+      createdIds.length > 1 ? `${createdIds.length} éléments dupliqués` : 'Élément dupliqué',
+    );
   }
 
   /**
@@ -962,22 +1144,29 @@ export function mountWhiteboardCanvas({
    * @param {1 | -1} direction
    */
   function stepSelectedLayer(direction) {
-    if (!editable || !selectedId) return;
-    const result = stepWhiteboardElementLayer(elements, selectedId, direction);
+    if (!editable || selectedIds.size !== 1 || !primarySelectedId) return;
+    const result = stepWhiteboardElementLayer(elements, primarySelectedId, direction);
     if (!result.changed) return;
     commitElements([...result.elements]);
     announce(direction === 1 ? 'Élément avancé d’un niveau' : 'Élément reculé d’un niveau');
   }
 
-  /**
-   * @param {string} elId
-   */
-  function deleteElementById(elId) {
-    const target = elements.find((el) => el.id === elId);
-    if (!target) return;
-    if (editingTextElementId === elId) closeTextEditor(false);
-    commitElements(elements.filter((el) => el.id !== elId));
-    announce(`${TYPE_LABELS[target.type]} supprimé`);
+  function deleteSelectedElements() {
+    if (!editable || selectedIds.size === 0) return;
+    const toDelete = new Set(selectedIds);
+    if (editingTextElementId && toDelete.has(editingTextElementId)) {
+      closeTextEditor(false);
+    }
+    const deleted = elements.filter((el) => toDelete.has(el.id));
+    if (deleted.length === 0) return;
+    selectedIds = new Set();
+    primarySelectedId = null;
+    commitElements(elements.filter((el) => !toDelete.has(el.id)));
+    if (deleted.length === 1 && deleted[0]) {
+      announce(`${TYPE_LABELS[deleted[0].type]} supprimé`);
+    } else {
+      announce(`${deleted.length} éléments supprimés`);
+    }
     stage.focus({ preventScroll: true });
   }
 
@@ -1004,6 +1193,17 @@ export function mountWhiteboardCanvas({
       g.dataset.transparentBg = 'true';
     } else {
       delete g.dataset.transparentBg;
+    }
+
+    if (el.type === 'arrow' && el.startBinding) {
+      g.dataset.startBound = el.startBinding.elementId;
+    } else {
+      delete g.dataset.startBound;
+    }
+    if (el.type === 'arrow' && el.endBinding) {
+      g.dataset.endBound = el.endBinding.elementId;
+    } else {
+      delete g.dataset.endBound;
     }
 
     if (el.type === 'sticky' || el.type === 'rect') {
@@ -1171,6 +1371,32 @@ export function mountWhiteboardCanvas({
       selBox.setAttribute('rx', '6');
       selBox.classList.add('lc-wb-selection-ring');
       childNodes.push(selBox);
+
+      if (el.type === 'arrow' && editable && selectedIds.size === 1) {
+        const pts =
+          el.points && el.points.length >= 2
+            ? el.points
+            : [
+                [0, el.height / 2],
+                [el.width, el.height / 2],
+              ];
+        const pStart = pts[0] ?? [0, 0];
+        const pEnd = pts[pts.length - 1] ?? [el.width, el.height];
+
+        for (const [which, pt] of /** @type {const} */ ([
+          ['start', pStart],
+          ['end', pEnd],
+        ])) {
+          const handle = document.createElementNS(SVG_NS, 'circle');
+          handle.setAttribute('cx', String(pt[0]));
+          handle.setAttribute('cy', String(pt[1]));
+          handle.setAttribute('r', '6');
+          handle.setAttribute('aria-hidden', 'true');
+          handle.classList.add('lc-wb-arrow-handle');
+          handle.dataset.wbArrowHandle = which;
+          childNodes.push(handle);
+        }
+      }
     }
 
     g.replaceChildren(...childNodes);
@@ -1195,7 +1421,7 @@ export function mountWhiteboardCanvas({
       }
     }
 
-    for (const el of ordered) {
+    ordered.forEach((el, idx) => {
       let g = renderedGroups.get(el.id);
       if (!g) {
         g = /** @type {SVGGElement} */ (document.createElementNS(SVG_NS, 'g'));
@@ -1205,28 +1431,51 @@ export function mountWhiteboardCanvas({
         wireElementGroupEvents(g, el.id);
         renderedGroups.set(el.id, g);
       }
-      populateElementGroup(g, el, el.id === selectedId);
-      elementsLayer.append(g);
-    }
+      populateElementGroup(g, el, selectedIds.has(el.id));
+      const currentAtIdx = elementsLayer.children[idx] ?? null;
+      if (currentAtIdx !== g) {
+        elementsLayer.insertBefore(g, currentAtIdx);
+      }
+    });
 
-    if (focusedId) {
+    if (focusedId && (selectedIds.size === 0 || selectedIds.has(focusedId))) {
       const focusedGroup = renderedGroups.get(focusedId);
       if (focusedGroup && document.activeElement !== focusedGroup) {
+        handlingElementPointer = true;
         focusedGroup.focus({ preventScroll: true });
+        handlingElementPointer = false;
       }
     }
   }
 
   /**
-   * Select an element and update selection rings without losing focus.
-   * @param {string | null} nextId
+   * Update active selection set and repaint selection rings without losing focus.
+   * @param {Iterable<string>} nextIdsIterable
+   * @param {string | null} [nextPrimary]
    */
-  function setSelectedId(nextId) {
-    if (selectedId === nextId) return;
-    selectedId = nextId;
+  function setSelection(nextIdsIterable, nextPrimary = null) {
+    const validIds = new Set(elements.map((el) => el.id));
+    const nextSet = new Set();
+    for (const id of nextIdsIterable) {
+      if (validIds.has(id)) nextSet.add(id);
+    }
+    const resolvedPrimary =
+      nextPrimary && nextSet.has(nextPrimary)
+        ? nextPrimary
+        : (nextSet.values().next().value ?? null);
+
+    const sameSet =
+      nextSet.size === selectedIds.size && [...nextSet].every((id) => selectedIds.has(id));
+    if (sameSet && resolvedPrimary === primarySelectedId) {
+      syncToolbarState();
+      return;
+    }
+
+    selectedIds = nextSet;
+    primarySelectedId = resolvedPrimary;
     for (const el of elements) {
       const g = renderedGroups.get(el.id);
-      if (g) populateElementGroup(g, el, el.id === selectedId);
+      if (g) populateElementGroup(g, el, selectedIds.has(el.id));
     }
     syncToolbarState();
   }
@@ -1265,6 +1514,7 @@ export function mountWhiteboardCanvas({
   textApplyBtn.addEventListener('click', () => closeTextEditor(true));
   textCancelBtn.addEventListener('click', () => closeTextEditor(false));
   textEditorInput.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       closeTextEditor(true);
@@ -1305,8 +1555,33 @@ export function mountWhiteboardCanvas({
     };
   }
 
+  /**
+   * Append visual snap indicator nodes (target highlight + anchor dot) to draftLayer.
+   * @param {{ binding: ArrowEndpointBinding; point: { x: number; y: number }; target: WhiteboardElement } | null} snap
+   * @param {{ x: number; y: number }} [overridePoint]
+   * @returns {SVGElement[]}
+   */
+  function buildSnapIndicatorNodes(snap, overridePoint) {
+    if (!snap) return [];
+    const pt = overridePoint ?? snap.point;
+    const ring = document.createElementNS(SVG_NS, 'rect');
+    ring.setAttribute('x', String(snap.target.x - 4));
+    ring.setAttribute('y', String(snap.target.y - 4));
+    ring.setAttribute('width', String(snap.target.width + 8));
+    ring.setAttribute('height', String(snap.target.height + 8));
+    ring.setAttribute('rx', '8');
+    ring.classList.add('lc-wb-snap-ring');
+
+    const dot = document.createElementNS(SVG_NS, 'circle');
+    dot.setAttribute('cx', String(pt.x));
+    dot.setAttribute('cy', String(pt.y));
+    dot.setAttribute('r', '7');
+    dot.classList.add('lc-wb-snap-dot');
+    return [ring, dot];
+  }
+
   // Track pointer interactions on elements and stage
-  /** @type {{ mode: 'drag-el'; elId: string; pointerId: number; startWorldX: number; startWorldY: number; origX: number; origY: number; moved: boolean } | { mode: 'pan'; pointerId: number; startClientX: number; startClientY: number; origPanX: number; origPanY: number } | { mode: 'draw-shape'; tool: WhiteboardElementType; pointerId: number; startWorldX: number; startWorldY: number; curWorldX: number; curWorldY: number } | { mode: 'draw-path'; pointerId: number; pts: Array<[number, number]> } | null} */
+  /** @type {{ mode: 'drag-el'; elId: string; pointerId: number; startWorldX: number; startWorldY: number; origPositions: Map<string, { x: number; y: number }>; collapseOnClick: boolean; moved: boolean } | { mode: 'drag-arrow-handle'; elId: string; which: 'start' | 'end'; pointerId: number; startPt: { x: number; y: number }; endPt: { x: number; y: number }; startBinding?: ArrowEndpointBinding; endBinding?: ArrowEndpointBinding; moved: boolean } | { mode: 'pan'; pointerId: number; startClientX: number; startClientY: number; origPanX: number; origPanY: number } | { mode: 'marquee'; pointerId: number; startWorldX: number; startWorldY: number; curWorldX: number; curWorldY: number } | { mode: 'draw-shape'; tool: WhiteboardElementType; pointerId: number; startWorldX: number; startWorldY: number; curWorldX: number; curWorldY: number } | { mode: 'draw-path'; pointerId: number; pts: Array<[number, number]> } | null} */
   let pointerState = null;
 
   /**
@@ -1316,7 +1591,13 @@ export function mountWhiteboardCanvas({
    */
   function wireElementGroupEvents(g, elId) {
     g.addEventListener('focus', () => {
-      setSelectedId(elId);
+      if (handlingElementPointer) return;
+      if (!selectedIds.has(elId)) {
+        setSelection([elId], elId);
+      } else {
+        primarySelectedId = elId;
+        syncToolbarState();
+      }
     });
 
     g.addEventListener('dblclick', (e) => {
@@ -1332,19 +1613,77 @@ export function mountWhiteboardCanvas({
       if (e.button !== 0) return;
       if (!editable || activeTool !== 'select') return;
       e.stopPropagation();
-      setSelectedId(elId);
+
+      if (e.shiftKey) {
+        const next = new Set(selectedIds);
+        if (next.has(elId)) {
+          next.delete(elId);
+        } else {
+          next.add(elId);
+        }
+        handlingElementPointer = true;
+        setSelection(next, next.has(elId) ? elId : null);
+        g.focus({ preventScroll: true });
+        handlingElementPointer = false;
+        announce(`${next.size} élément(s) sélectionné(s)`);
+        return;
+      }
+
+      const wasInMulti = selectedIds.size > 1 && selectedIds.has(elId);
+      handlingElementPointer = true;
+      if (!wasInMulti) {
+        setSelection([elId], elId);
+      } else {
+        primarySelectedId = elId;
+        syncToolbarState();
+      }
       g.focus({ preventScroll: true });
+      handlingElementPointer = false;
+
       const target = elements.find((el) => el.id === elId);
       if (!target) return;
+
+      const handleEl =
+        e.target instanceof Element ? e.target.closest('[data-wb-arrow-handle]') : null;
+      const handleWhich = handleEl?.getAttribute('data-wb-arrow-handle');
+      if (target.type === 'arrow' && (handleWhich === 'start' || handleWhich === 'end')) {
+        const [p1, p2] = getArrowWorldEndpoints(target);
+        pointerState = {
+          mode: 'drag-arrow-handle',
+          elId,
+          which: handleWhich,
+          pointerId: e.pointerId,
+          startPt: p1,
+          endPt: p2,
+          ...(target.startBinding ? { startBinding: target.startBinding } : {}),
+          ...(target.endBinding ? { endBinding: target.endBinding } : {}),
+          moved: false,
+        };
+        try {
+          g.setPointerCapture(e.pointerId);
+        } catch {
+          // Ignore if unavailable.
+        }
+        return;
+      }
+
       const world = clientToWorld(e.clientX, e.clientY);
+      /** @type {Map<string, { x: number; y: number }>} */
+      const origPositions = new Map();
+      for (const item of elements) {
+        if (selectedIds.has(item.id) || item.id === elId) {
+          origPositions.set(item.id, { x: item.x, y: item.y });
+        }
+      }
+
       pointerState = {
         mode: 'drag-el',
         elId,
         pointerId: e.pointerId,
         startWorldX: world.x,
         startWorldY: world.y,
-        origX: target.x,
-        origY: target.y,
+        origPositions,
+        collapseOnClick: wasInMulti,
         moved: false,
       };
       try {
@@ -1357,10 +1696,48 @@ export function mountWhiteboardCanvas({
     g.addEventListener('pointermove', (e) => {
       if (
         !pointerState ||
-        pointerState.mode !== 'drag-el' ||
+        (pointerState.mode !== 'drag-el' && pointerState.mode !== 'drag-arrow-handle') ||
         pointerState.elId !== elId ||
         pointerState.pointerId !== e.pointerId
       ) {
+        return;
+      }
+      if (pointerState.mode === 'drag-arrow-handle') {
+        pointerState.moved = true;
+        const world = clientToWorld(e.clientX, e.clientY);
+        const exclude = new Set([elId]);
+        const snap = findArrowSnapTarget(elements, world, { excludeIds: exclude });
+        const freePt = snapPointToGrid(world, GRID_SIZE, snapToGrid);
+        if (pointerState.which === 'start') {
+          pointerState.startPt = snap ? snap.point : freePt;
+          pointerState.startBinding = snap ? snap.binding : undefined;
+        } else {
+          pointerState.endPt = snap ? snap.point : freePt;
+          pointerState.endBinding = snap ? snap.binding : undefined;
+        }
+        const current = elements.find((el) => el.id === elId);
+        const groupEl = renderedGroups.get(elId);
+        if (current && groupEl) {
+          const geom = buildArrowGeometry(pointerState.startPt, pointerState.endPt);
+          const { startBinding: _sb, endBinding: _eb, ...rest } = current;
+          /** @type {WhiteboardElement} */
+          const previewArrow = {
+            ...rest,
+            x: geom.x,
+            y: geom.y,
+            width: geom.width,
+            height: geom.height,
+            points: geom.points,
+            ...(pointerState.startBinding ? { startBinding: pointerState.startBinding } : {}),
+            ...(pointerState.endBinding ? { endBinding: pointerState.endBinding } : {}),
+          };
+          populateElementGroup(groupEl, previewArrow, selectedIds.has(elId));
+        }
+        draftLayer.replaceChildren(...buildSnapIndicatorNodes(snap));
+        return;
+      }
+
+      if (pointerState.mode !== 'drag-el') {
         return;
       }
       const world = clientToWorld(e.clientX, e.clientY);
@@ -1369,45 +1746,136 @@ export function mountWhiteboardCanvas({
       if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
         pointerState.moved = true;
       }
-      const nextX = Math.round(clamp(pointerState.origX + dx, -10000, 10000));
-      const nextY = Math.round(clamp(pointerState.origY + dy, -10000, 10000));
-      const idx = elements.findIndex((el) => el.id === elId);
-      const current = idx >= 0 ? elements[idx] : undefined;
-      if (!current) return;
-      const updated = { ...current, x: nextX, y: nextY };
-      g.setAttribute('transform', `translate(${nextX} ${nextY})`);
-      g.dataset.x = String(nextX);
-      g.dataset.y = String(nextY);
-      g.setAttribute('aria-label', describeElement(updated));
+      const { origPositions } = pointerState;
+      const origPrimary = origPositions.get(elId);
+      const appliedDx =
+        snapToGrid && origPrimary
+          ? clamp(snapValueToGrid(origPrimary.x + dx, GRID_SIZE, true), -10000, 10000) -
+            origPrimary.x
+          : dx;
+      const appliedDy =
+        snapToGrid && origPrimary
+          ? clamp(snapValueToGrid(origPrimary.y + dy, GRID_SIZE, true), -10000, 10000) -
+            origPrimary.y
+          : dy;
+      const movedIds = new Set(origPositions.keys());
+      const liveSnapshot = elements.map((el) => {
+        const orig = origPositions.get(el.id);
+        if (!orig) return el;
+        return {
+          ...el,
+          x: Math.round(clamp(orig.x + appliedDx, -10000, 10000)),
+          y: Math.round(clamp(orig.y + appliedDy, -10000, 10000)),
+        };
+      });
+      const detachedSnapshot = detachUnfollowedArrowBindings(liveSnapshot, movedIds);
+      const liveRecomputed = recomputeBoundArrows(detachedSnapshot);
+
+      for (const updated of liveRecomputed) {
+        const groupEl = renderedGroups.get(updated.id);
+        if (!groupEl) continue;
+        if (origPositions.has(updated.id)) {
+          groupEl.setAttribute('transform', `translate(${updated.x} ${updated.y})`);
+          groupEl.dataset.x = String(updated.x);
+          groupEl.dataset.y = String(updated.y);
+          groupEl.setAttribute('aria-label', describeElement(updated));
+        } else if (updated.type === 'arrow' && (updated.startBinding || updated.endBinding)) {
+          populateElementGroup(groupEl, updated, selectedIds.has(updated.id));
+        }
+      }
     });
 
     const finishDrag = (/** @type {PointerEvent} */ e) => {
       if (
         !pointerState ||
-        pointerState.mode !== 'drag-el' ||
+        (pointerState.mode !== 'drag-el' && pointerState.mode !== 'drag-arrow-handle') ||
         pointerState.elId !== elId ||
         pointerState.pointerId !== e.pointerId
       ) {
         return;
       }
+      if (pointerState.mode === 'drag-arrow-handle') {
+        const state = pointerState;
+        pointerState = null;
+        draftLayer.replaceChildren();
+        if (!state.moved) return;
+        const geom = buildArrowGeometry(state.startPt, state.endPt);
+        commitElements(
+          elements.map((el) => {
+            if (el.id !== elId) return el;
+            const { startBinding: _sb, endBinding: _eb, ...rest } = el;
+            return {
+              ...rest,
+              x: geom.x,
+              y: geom.y,
+              width: geom.width,
+              height: geom.height,
+              points: geom.points,
+              ...(state.startBinding ? { startBinding: state.startBinding } : {}),
+              ...(state.endBinding ? { endBinding: state.endBinding } : {}),
+            };
+          }),
+        );
+        const hasSnap = Boolean(state.startBinding || state.endBinding);
+        announce(hasSnap ? 'Extrémité de flèche aimantée' : 'Extrémité de flèche déplacée');
+        return;
+      }
+
+      if (pointerState.mode !== 'drag-el') {
+        return;
+      }
       const world = clientToWorld(e.clientX, e.clientY);
       const dx = world.x - pointerState.startWorldX;
       const dy = world.y - pointerState.startWorldY;
-      const moved = pointerState.moved;
-      const origX = pointerState.origX;
-      const origY = pointerState.origY;
+      const { moved, origPositions, collapseOnClick } = pointerState;
       pointerState = null;
-      if (!moved) return;
-      const nextX = Math.round(clamp(origX + dx, -10000, 10000));
-      const nextY = Math.round(clamp(origY + dy, -10000, 10000));
-      commitElements(elements.map((el) => (el.id === elId ? { ...el, x: nextX, y: nextY } : el)));
-      announce(`Élément déplacé à ${nextX}, ${nextY}`);
+
+      if (!moved) {
+        if (collapseOnClick) {
+          setSelection([elId], elId);
+        }
+        return;
+      }
+
+      const origPrimary = origPositions.get(elId);
+      const appliedDx =
+        snapToGrid && origPrimary
+          ? clamp(snapValueToGrid(origPrimary.x + dx, GRID_SIZE, true), -10000, 10000) -
+            origPrimary.x
+          : dx;
+      const appliedDy =
+        snapToGrid && origPrimary
+          ? clamp(snapValueToGrid(origPrimary.y + dy, GRID_SIZE, true), -10000, 10000) -
+            origPrimary.y
+          : dy;
+      const movedIds = new Set(origPositions.keys());
+      const movedElements = elements.map((el) => {
+        const orig = origPositions.get(el.id);
+        if (!orig) return el;
+        return {
+          ...el,
+          x: Math.round(clamp(orig.x + appliedDx, -10000, 10000)),
+          y: Math.round(clamp(orig.y + appliedDy, -10000, 10000)),
+        };
+      });
+      commitElements(detachUnfollowedArrowBindings(movedElements, movedIds));
+      if (origPositions.size > 1) {
+        announce(`${origPositions.size} éléments déplacés`);
+      } else {
+        const nextX = origPrimary ? Math.round(clamp(origPrimary.x + appliedDx, -10000, 10000)) : 0;
+        const nextY = origPrimary ? Math.round(clamp(origPrimary.y + appliedDy, -10000, 10000)) : 0;
+        announce(`Élément déplacé à ${nextX}, ${nextY}`);
+      }
     };
 
     g.addEventListener('pointerup', finishDrag);
     g.addEventListener('lostpointercapture', () => {
-      if (pointerState?.mode === 'drag-el' && pointerState.elId === elId) {
+      if (
+        (pointerState?.mode === 'drag-el' || pointerState?.mode === 'drag-arrow-handle') &&
+        pointerState.elId === elId
+      ) {
         pointerState = null;
+        draftLayer.replaceChildren();
         renderElements();
       }
     });
@@ -1416,6 +1884,20 @@ export function mountWhiteboardCanvas({
       if (!editable) return;
       const target = elements.find((el) => el.id === elId);
       if (!target) return;
+
+      if (e.key === ' ' && e.shiftKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        const next = new Set(selectedIds);
+        if (next.has(elId)) {
+          next.delete(elId);
+        } else {
+          next.add(elId);
+        }
+        setSelection(next, next.has(elId) ? elId : null);
+        announce(`${next.size} élément(s) sélectionné(s)`);
+        return;
+      }
 
       const step = e.shiftKey ? 1 : 10;
       if (
@@ -1427,29 +1909,91 @@ export function mountWhiteboardCanvas({
         e.preventDefault();
         e.stopPropagation();
 
+        const useSnap = snapToGrid && !e.shiftKey;
         if (e.altKey) {
           let nextW = target.width;
           let nextH = target.height;
-          if (e.key === 'ArrowRight') nextW += step;
-          if (e.key === 'ArrowLeft') nextW -= step;
-          if (e.key === 'ArrowDown') nextH += step;
-          if (e.key === 'ArrowUp') nextH -= step;
+          if (useSnap) {
+            if (e.key === 'ArrowRight') {
+              nextW = stepValueWithGrid(target.width, 1, {
+                gridSize: GRID_SIZE,
+                snapEnabled: true,
+              });
+            }
+            if (e.key === 'ArrowLeft') {
+              nextW = stepValueWithGrid(target.width, -1, {
+                gridSize: GRID_SIZE,
+                snapEnabled: true,
+              });
+            }
+            if (e.key === 'ArrowDown') {
+              nextH = stepValueWithGrid(target.height, 1, {
+                gridSize: GRID_SIZE,
+                snapEnabled: true,
+              });
+            }
+            if (e.key === 'ArrowUp') {
+              nextH = stepValueWithGrid(target.height, -1, {
+                gridSize: GRID_SIZE,
+                snapEnabled: true,
+              });
+            }
+            nextW = Math.max(GRID_SIZE, nextW);
+            nextH = Math.max(GRID_SIZE, nextH);
+          } else {
+            if (e.key === 'ArrowRight') nextW += step;
+            if (e.key === 'ArrowLeft') nextW -= step;
+            if (e.key === 'ArrowDown') nextH += step;
+            if (e.key === 'ArrowUp') nextH -= step;
+          }
           const resized = resizeElement(target, nextW, nextH);
           commitElements(elements.map((el) => (el.id === elId ? resized : el)));
           announce(`Taille ${Math.round(resized.width)} par ${Math.round(resized.height)}`);
           return;
         }
 
-        let nextX = target.x;
-        let nextY = target.y;
-        if (e.key === 'ArrowRight') nextX += step;
-        if (e.key === 'ArrowLeft') nextX -= step;
-        if (e.key === 'ArrowDown') nextY += step;
-        if (e.key === 'ArrowUp') nextY -= step;
-        nextX = clamp(Math.round(nextX), -10000, 10000);
-        nextY = clamp(Math.round(nextY), -10000, 10000);
-        commitElements(elements.map((el) => (el.id === elId ? { ...el, x: nextX, y: nextY } : el)));
-        announce(`Position ${nextX}, ${nextY}`);
+        const dx = useSnap
+          ? e.key === 'ArrowRight'
+            ? stepValueWithGrid(target.x, 1, { gridSize: GRID_SIZE, snapEnabled: true }) - target.x
+            : e.key === 'ArrowLeft'
+              ? stepValueWithGrid(target.x, -1, { gridSize: GRID_SIZE, snapEnabled: true }) -
+                target.x
+              : 0
+          : e.key === 'ArrowRight'
+            ? step
+            : e.key === 'ArrowLeft'
+              ? -step
+              : 0;
+        const dy = useSnap
+          ? e.key === 'ArrowDown'
+            ? stepValueWithGrid(target.y, 1, { gridSize: GRID_SIZE, snapEnabled: true }) - target.y
+            : e.key === 'ArrowUp'
+              ? stepValueWithGrid(target.y, -1, { gridSize: GRID_SIZE, snapEnabled: true }) -
+                target.y
+              : 0
+          : e.key === 'ArrowDown'
+            ? step
+            : e.key === 'ArrowUp'
+              ? -step
+              : 0;
+        const moveIds = selectedIds.has(elId) ? selectedIds : new Set([elId]);
+        const movedElements = elements.map((el) =>
+          moveIds.has(el.id)
+            ? {
+                ...el,
+                x: clamp(Math.round(el.x + dx), -10000, 10000),
+                y: clamp(Math.round(el.y + dy), -10000, 10000),
+              }
+            : el,
+        );
+        commitElements(detachUnfollowedArrowBindings(movedElements, moveIds));
+        if (moveIds.size > 1) {
+          announce(`${moveIds.size} éléments déplacés`);
+        } else {
+          announce(
+            `Position ${clamp(Math.round(target.x + dx), -10000, 10000)}, ${clamp(Math.round(target.y + dy), -10000, 10000)}`,
+          );
+        }
         return;
       }
 
@@ -1479,35 +2023,80 @@ export function mountWhiteboardCanvas({
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
         e.stopPropagation();
-        deleteElementById(elId);
+        if (!selectedIds.has(elId)) {
+          setSelection([elId], elId);
+        }
+        deleteSelectedElements();
       }
     });
   }
 
   /**
-   * Render temporary preview geometry while drawing with pointer.
+   * Render temporary preview geometry while drawing or marquee-selecting with pointer.
    */
   function renderDraftPreview() {
     if (!pointerState) {
       draftLayer.replaceChildren();
       return;
     }
-    if (pointerState.mode === 'draw-shape') {
-      const { tool, startWorldX, startWorldY, curWorldX, curWorldY } = pointerState;
+    if (pointerState.mode === 'marquee') {
+      const { startWorldX, startWorldY, curWorldX, curWorldY } = pointerState;
       const x = Math.min(startWorldX, curWorldX);
       const y = Math.min(startWorldY, curWorldY);
       const w = Math.abs(curWorldX - startWorldX);
       const h = Math.abs(curWorldY - startWorldY);
+      const box = document.createElementNS(SVG_NS, 'rect');
+      box.setAttribute('x', String(x));
+      box.setAttribute('y', String(y));
+      box.setAttribute('width', String(Math.max(2, w)));
+      box.setAttribute('height', String(Math.max(2, h)));
+      box.setAttribute('rx', '4');
+      box.classList.add('lc-wb-marquee');
+      draftLayer.replaceChildren(box);
+      return;
+    }
+    if (pointerState.mode === 'draw-shape') {
+      const { tool, startWorldX, startWorldY, curWorldX, curWorldY } = pointerState;
+      const sx = snapValueToGrid(startWorldX, GRID_SIZE, snapToGrid);
+      const sy = snapValueToGrid(startWorldY, GRID_SIZE, snapToGrid);
+      const cx = snapValueToGrid(curWorldX, GRID_SIZE, snapToGrid);
+      const cy = snapValueToGrid(curWorldY, GRID_SIZE, snapToGrid);
+      const x = Math.min(sx, cx);
+      const y = Math.min(sy, cy);
+      const w = Math.abs(cx - sx);
+      const h = Math.abs(cy - sy);
       if (tool === 'arrow') {
+        const startSnap = findArrowSnapTarget(elements, { x: startWorldX, y: startWorldY });
+        const endSnap = findArrowSnapTarget(elements, { x: curWorldX, y: curWorldY });
+        const refP1 = startSnap
+          ? startSnap.point
+          : snapPointToGrid({ x: startWorldX, y: startWorldY }, GRID_SIZE, snapToGrid);
+        const refP2 = endSnap
+          ? endSnap.point
+          : snapPointToGrid({ x: curWorldX, y: curWorldY }, GRID_SIZE, snapToGrid);
+        const p1 =
+          startSnap && startSnap.binding.anchor === 'center'
+            ? intersectRayWithElementBorder(startSnap.target, refP2)
+            : refP1;
+        const p2 =
+          endSnap && endSnap.binding.anchor === 'center'
+            ? intersectRayWithElementBorder(endSnap.target, refP1)
+            : refP2;
+
         const line = document.createElementNS(SVG_NS, 'line');
-        line.setAttribute('x1', String(startWorldX));
-        line.setAttribute('y1', String(startWorldY));
-        line.setAttribute('x2', String(curWorldX));
-        line.setAttribute('y2', String(curWorldY));
+        line.setAttribute('x1', String(p1.x));
+        line.setAttribute('y1', String(p1.y));
+        line.setAttribute('x2', String(p2.x));
+        line.setAttribute('y2', String(p2.y));
         line.setAttribute('marker-end', `url(#${uid}-arrow-${activeColor})`);
         line.classList.add('lc-wb-arrow-line');
         line.dataset.color = activeColor;
-        draftLayer.replaceChildren(line);
+
+        draftLayer.replaceChildren(
+          ...buildSnapIndicatorNodes(startSnap, p1),
+          ...buildSnapIndicatorNodes(endSnap, p2),
+          line,
+        );
       } else if (tool === 'ellipse') {
         const el = document.createElementNS(SVG_NS, 'ellipse');
         el.setAttribute('cx', String(x + w / 2));
@@ -1542,13 +2131,36 @@ export function mountWhiteboardCanvas({
     }
   }
 
-  // Stage pointer handlers (pan, click-to-create, drag-to-size, freehand draw)
+  // Stage pointer handlers (pan, marquee select, click-to-create, drag-to-size, freehand draw)
   svg.addEventListener('pointerdown', (e) => {
     const isMiddle = e.button === 1;
     if (e.button !== 0 && !isMiddle) return;
 
+    if (
+      !isMiddle &&
+      editable &&
+      (activeTool === 'marquee' || (activeTool === 'select' && e.shiftKey))
+    ) {
+      const world = clientToWorld(e.clientX, e.clientY);
+      pointerState = {
+        mode: 'marquee',
+        pointerId: e.pointerId,
+        startWorldX: world.x,
+        startWorldY: world.y,
+        curWorldX: world.x,
+        curWorldY: world.y,
+      };
+      renderDraftPreview();
+      try {
+        svg.setPointerCapture(e.pointerId);
+      } catch {
+        // Ignore if unavailable.
+      }
+      return;
+    }
+
     if (isMiddle || !editable || activeTool === 'select') {
-      setSelectedId(null);
+      setSelection([], null);
       pointerState = {
         mode: 'pan',
         pointerId: e.pointerId,
@@ -1565,8 +2177,9 @@ export function mountWhiteboardCanvas({
       return;
     }
 
+    const drawTool = /** @type {WhiteboardElementType} */ (activeTool);
     const world = clientToWorld(e.clientX, e.clientY);
-    if (activeTool === 'path') {
+    if (drawTool === 'path') {
       pointerState = {
         mode: 'draw-path',
         pointerId: e.pointerId,
@@ -1575,7 +2188,7 @@ export function mountWhiteboardCanvas({
     } else {
       pointerState = {
         mode: 'draw-shape',
-        tool: activeTool,
+        tool: drawTool,
         pointerId: e.pointerId,
         startWorldX: world.x,
         startWorldY: world.y,
@@ -1606,7 +2219,7 @@ export function mountWhiteboardCanvas({
       return;
     }
     const world = clientToWorld(e.clientX, e.clientY);
-    if (pointerState.mode === 'draw-shape') {
+    if (pointerState.mode === 'marquee' || pointerState.mode === 'draw-shape') {
       pointerState.curWorldX = world.x;
       pointerState.curWorldY = world.y;
       renderDraftPreview();
@@ -1633,6 +2246,23 @@ export function mountWhiteboardCanvas({
       return;
     }
 
+    if (state.mode === 'marquee') {
+      const x = Math.min(state.startWorldX, state.curWorldX);
+      const y = Math.min(state.startWorldY, state.curWorldY);
+      const width = Math.abs(state.curWorldX - state.startWorldX);
+      const height = Math.abs(state.curWorldY - state.startWorldY);
+      const hitIds = selectElementsInMarquee(elements, { x, y, width, height });
+      setSelection(hitIds, hitIds[0] ?? null);
+      if (activeTool === 'marquee') {
+        setActiveTool('select');
+      }
+      if (hitIds[0]) {
+        renderedGroups.get(hitIds[0])?.focus({ preventScroll: true });
+      }
+      announce(`${hitIds.length} élément(s) sélectionné(s)`);
+      return;
+    }
+
     if (state.mode === 'draw-shape') {
       const dx = state.curWorldX - state.startWorldX;
       const dy = state.curWorldY - state.startWorldY;
@@ -1644,34 +2274,65 @@ export function mountWhiteboardCanvas({
         // Single-click without drag creates a well-sized default element (WCAG 2.5.7)
         created = buildDefaultElement(state.tool, state.startWorldX, state.startWorldY);
       } else if (state.tool === 'arrow') {
-        const minX = Math.min(state.startWorldX, state.curWorldX);
-        const minY = Math.min(state.startWorldY, state.curWorldY);
-        const width = Math.max(16, Math.abs(dx));
-        const height = Math.max(16, Math.abs(dy));
+        const startSnap = findArrowSnapTarget(elements, {
+          x: state.startWorldX,
+          y: state.startWorldY,
+        });
+        const endSnap = findArrowSnapTarget(elements, {
+          x: state.curWorldX,
+          y: state.curWorldY,
+        });
+        const refP1 = startSnap
+          ? startSnap.point
+          : snapPointToGrid({ x: state.startWorldX, y: state.startWorldY }, GRID_SIZE, snapToGrid);
+        const refP2 = endSnap
+          ? endSnap.point
+          : snapPointToGrid({ x: state.curWorldX, y: state.curWorldY }, GRID_SIZE, snapToGrid);
+        const p1 =
+          startSnap && startSnap.binding.anchor === 'center'
+            ? intersectRayWithElementBorder(startSnap.target, refP2)
+            : refP1;
+        const p2 =
+          endSnap && endSnap.binding.anchor === 'center'
+            ? intersectRayWithElementBorder(endSnap.target, refP1)
+            : refP2;
+        const geom = buildArrowGeometry(p1, p2);
         created = {
           id: crypto.randomUUID(),
           type: 'arrow',
-          x: Math.round(minX),
-          y: Math.round(minY),
-          width: Math.round(width),
-          height: Math.round(height),
+          x: geom.x,
+          y: geom.y,
+          width: geom.width,
+          height: geom.height,
           color: activeColor,
-          points: [
-            [Math.round(state.startWorldX - minX), Math.round(state.startWorldY - minY)],
-            [Math.round(state.curWorldX - minX), Math.round(state.curWorldY - minY)],
-          ],
+          points: geom.points,
+          ...(startSnap ? { startBinding: startSnap.binding } : {}),
+          ...(endSnap ? { endBinding: endSnap.binding } : {}),
           zIndex: nextZIndex(),
         };
       } else {
-        const minX = Math.min(state.startWorldX, state.curWorldX);
-        const minY = Math.min(state.startWorldY, state.curWorldY);
+        const sx = snapValueToGrid(state.startWorldX, GRID_SIZE, snapToGrid);
+        const sy = snapValueToGrid(state.startWorldY, GRID_SIZE, snapToGrid);
+        const cx = snapValueToGrid(state.curWorldX, GRID_SIZE, snapToGrid);
+        const cy = snapValueToGrid(state.curWorldY, GRID_SIZE, snapToGrid);
+        const minX = Math.min(sx, cx);
+        const minY = Math.min(sy, cy);
+        const rawW = Math.abs(cx - sx);
+        const rawH = Math.abs(cy - sy);
+        const minBox = snapToGrid ? GRID_SIZE : 24;
         created = {
           id: crypto.randomUUID(),
           type: state.tool,
-          x: Math.round(minX),
-          y: Math.round(minY),
-          width: Math.max(24, Math.round(Math.abs(dx))),
-          height: Math.max(24, Math.round(Math.abs(dy))),
+          x: snapToGrid ? clamp(minX, -10000, 10000) : Math.round(minX),
+          y: snapToGrid ? clamp(minY, -10000, 10000) : Math.round(minY),
+          width: Math.max(
+            minBox,
+            snapToGrid ? snapValueToGrid(rawW, GRID_SIZE, true) : Math.round(rawW),
+          ),
+          height: Math.max(
+            minBox,
+            snapToGrid ? snapValueToGrid(rawH, GRID_SIZE, true) : Math.round(rawH),
+          ),
           text: state.tool === 'sticky' ? 'Post-it' : state.tool === 'text' ? 'Texte' : '',
           color: activeColor,
           ...(activeTransparentBg && whiteboardElementSupportsBackground(state.tool)
@@ -1681,7 +2342,8 @@ export function mountWhiteboardCanvas({
         };
       }
 
-      selectedId = null;
+      selectedIds = new Set();
+      primarySelectedId = null;
       commitElements([...elements, created]);
       announce(`${TYPE_LABELS[created.type]} ajouté au tableau`);
       return;
@@ -1691,7 +2353,8 @@ export function mountWhiteboardCanvas({
       const pts = state.pts;
       if (pts.length < 2) {
         const created = buildDefaultElement('path', pts[0]?.[0] ?? 200, pts[0]?.[1] ?? 200);
-        selectedId = null;
+        selectedIds = new Set();
+        primarySelectedId = null;
         commitElements([...elements, created]);
         announce('Tracé libre ajouté au tableau');
         return;
@@ -1720,7 +2383,8 @@ export function mountWhiteboardCanvas({
         ]),
         zIndex: nextZIndex(),
       });
-      selectedId = null;
+      selectedIds = new Set();
+      primarySelectedId = null;
       commitElements([...elements, created]);
       announce('Tracé libre ajouté au tableau');
     }
@@ -1728,7 +2392,11 @@ export function mountWhiteboardCanvas({
 
   svg.addEventListener('pointerup', finishStagePointer);
   svg.addEventListener('lostpointercapture', () => {
-    if (pointerState && pointerState.mode !== 'drag-el') {
+    if (
+      pointerState &&
+      pointerState.mode !== 'drag-el' &&
+      pointerState.mode !== 'drag-arrow-handle'
+    ) {
       pointerState = null;
       draftLayer.replaceChildren();
     }
@@ -1765,8 +2433,16 @@ export function mountWhiteboardCanvas({
       added.push({
         id: crypto.randomUUID(),
         type: 'image',
-        x: Math.round(center.x - dims.width / 2 + offset),
-        y: Math.round(center.y - dims.height / 2 + offset),
+        x: clamp(
+          snapValueToGrid(center.x - dims.width / 2 + offset, GRID_SIZE, snapToGrid),
+          -10000,
+          10000,
+        ),
+        y: clamp(
+          snapValueToGrid(center.y - dims.height / 2 + offset, GRID_SIZE, snapToGrid),
+          -10000,
+          10000,
+        ),
         width: dims.width,
         height: dims.height,
         text: uploaded.alt,
@@ -1778,7 +2454,10 @@ export function mountWhiteboardCanvas({
     }
     if (added.length > 0) {
       const last = added[added.length - 1];
-      if (last) selectedId = last.id;
+      if (last) {
+        selectedIds = new Set([last.id]);
+        primarySelectedId = last.id;
+      }
       commitElements([...elements, ...added]);
       if (last) renderedGroups.get(last.id)?.focus({ preventScroll: true });
       announce(`${added.length} image(s) locale(s) ajoutée(s)`);
@@ -1840,7 +2519,7 @@ export function mountWhiteboardCanvas({
     void insertUploadedImages(files);
   });
 
-  // Container-level keyboard shortcuts (Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z)
+  // Container-level keyboard shortcuts (Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z, Ctrl+D, Ctrl+A, Escape)
   root.addEventListener('keydown', (e) => {
     if (e.target === textEditorInput) return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
@@ -1853,6 +2532,15 @@ export function mountWhiteboardCanvas({
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
       e.preventDefault();
       redo();
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
+      if (!editable) return;
+      e.preventDefault();
+      duplicateSelected();
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+      e.preventDefault();
+      const allIds = elements.map((el) => el.id);
+      setSelection(allIds, allIds[0] ?? null);
+      announce(`${allIds.length} élément(s) sélectionné(s)`);
     } else if (e.key === 'Escape') {
       if (pointerState) {
         pointerState = null;
@@ -1862,6 +2550,9 @@ export function mountWhiteboardCanvas({
       if (editable && activeTool !== 'select') {
         setActiveTool('select');
         announce('Outil Sélectionner activé');
+      } else if (selectedIds.size > 0) {
+        setSelection([], null);
+        announce('Sélection effacée');
       }
     }
   });
@@ -2023,6 +2714,7 @@ export function mountWhiteboardCanvas({
     return { svgString, width, height };
   }
 
+  syncGridDisplay();
   setViewport(viewport, false);
   renderElements();
   syncToolbarState();

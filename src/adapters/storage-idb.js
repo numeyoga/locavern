@@ -1,11 +1,12 @@
-/** @import { AppPreferences, AssetMeta, HydratePayload, Note, Project, StoreEffect, Task, Whiteboard } from '../types.d.ts' */
+/** @import { AppPreferences, AssetMeta, HydratePayload, LocalTemplate, Note, Project, StoreEffect, Task, TrashItem, Whiteboard } from '../types.d.ts' */
 
 import { openDB } from 'idb';
 
 const DB_NAME = 'locavern-db';
-const DB_VERSION = 2;
+const DB_VERSION = 4;
 const LOCK_NAME = 'locavern-write-lock';
 const LOCK_CHANNEL = 'locavern-lock-channel';
+const LAST_BACKUP_META_KEY = 'lastBackupAt';
 
 /**
  * @typedef {AssetMeta & { readonly blob: Blob }} StoredAssetRecord
@@ -36,6 +37,12 @@ export function openLocavernDb() {
       if (!db.objectStoreNames.contains('assets')) {
         db.createObjectStore('assets', { keyPath: 'id' });
       }
+      if (!db.objectStoreNames.contains('trash')) {
+        db.createObjectStore('trash', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('templates')) {
+        db.createObjectStore('templates', { keyPath: 'id' });
+      }
     },
   });
 }
@@ -47,17 +54,20 @@ export function openLocavernDb() {
  */
 export async function loadHydrationPayload(db) {
   const tx = db.transaction(
-    ['meta', 'projects', 'tasks', 'notes', 'whiteboards', 'assets'],
+    ['meta', 'projects', 'tasks', 'notes', 'whiteboards', 'assets', 'trash', 'templates'],
     'readonly',
   );
-  const [prefRow, projects, tasks, notes, whiteboards, rawAssets] = await Promise.all([
-    tx.objectStore('meta').get('preferences'),
-    tx.objectStore('projects').getAll(),
-    tx.objectStore('tasks').getAll(),
-    tx.objectStore('notes').getAll(),
-    tx.objectStore('whiteboards').getAll(),
-    tx.objectStore('assets').getAll(),
-  ]);
+  const [prefRow, projects, tasks, notes, whiteboards, rawAssets, trash, templates] =
+    await Promise.all([
+      tx.objectStore('meta').get('preferences'),
+      tx.objectStore('projects').getAll(),
+      tx.objectStore('tasks').getAll(),
+      tx.objectStore('notes').getAll(),
+      tx.objectStore('whiteboards').getAll(),
+      tx.objectStore('assets').getAll(),
+      tx.objectStore('trash').getAll(),
+      tx.objectStore('templates').getAll(),
+    ]);
   await tx.done;
 
   /** @type {AssetMeta[]} */
@@ -78,8 +88,33 @@ export async function loadHydrationPayload(db) {
     notes: /** @type {Note[]} */ (notes),
     whiteboards: /** @type {Whiteboard[]} */ (whiteboards),
     assets,
+    trash: /** @type {TrashItem[]} */ (trash),
+    templates: /** @type {LocalTemplate[]} */ (templates),
     preferences,
   };
+}
+
+/**
+ * Read the ISO timestamp of the most recent local ZIP backup export, if any.
+ * @param {import('idb').IDBPDatabase} db
+ * @returns {Promise<string | null>}
+ */
+export async function getLastBackupAt(db) {
+  const row = await db.get('meta', LAST_BACKUP_META_KEY);
+  return row && typeof row.value === 'string' ? row.value : null;
+}
+
+/**
+ * Persist or clear the ISO timestamp of the most recent ZIP backup export.
+ * @param {import('idb').IDBPDatabase} db
+ * @param {string | null} isoTimestamp
+ */
+export async function setLastBackupAt(db, isoTimestamp) {
+  if (isoTimestamp === null) {
+    await db.delete('meta', LAST_BACKUP_META_KEY);
+    return;
+  }
+  await db.put('meta', { key: LAST_BACKUP_META_KEY, value: isoTimestamp });
 }
 
 /**
@@ -128,7 +163,7 @@ export async function loadAllAssetBlobs(db) {
  */
 export async function replaceAllWithBlobs(db, payload, blobs) {
   const tx = db.transaction(
-    ['meta', 'projects', 'tasks', 'notes', 'whiteboards', 'assets'],
+    ['meta', 'projects', 'tasks', 'notes', 'whiteboards', 'assets', 'trash'],
     'readwrite',
   );
   await Promise.all([
@@ -137,8 +172,38 @@ export async function replaceAllWithBlobs(db, payload, blobs) {
     tx.objectStore('notes').clear(),
     tx.objectStore('whiteboards').clear(),
     tx.objectStore('assets').clear(),
+    tx.objectStore('trash').clear(),
   ]);
   await tx.objectStore('meta').put({ key: 'schema', schemaVersion: 2 });
+  for (const p of payload.projects) {
+    tx.objectStore('projects').put(p);
+  }
+  for (const t of payload.tasks) {
+    tx.objectStore('tasks').put(t);
+  }
+  for (const n of payload.notes) {
+    tx.objectStore('notes').put(n);
+  }
+  for (const w of payload.whiteboards) {
+    tx.objectStore('whiteboards').put(w);
+  }
+  for (const a of payload.assets) {
+    const blob = blobs.get(a.id);
+    if (blob) {
+      tx.objectStore('assets').put({ ...a, blob });
+    }
+  }
+  await tx.done;
+}
+
+/**
+ * Merge imported collections + binary blobs into IndexedDB without erasing existing records.
+ * @param {import('idb').IDBPDatabase} db
+ * @param {{ projects: readonly Project[]; tasks: readonly Task[]; notes: readonly Note[]; whiteboards: readonly Whiteboard[]; assets: readonly AssetMeta[] }} payload
+ * @param {ReadonlyMap<string, Blob>} blobs
+ */
+export async function mergeWithBlobs(db, payload, blobs) {
+  const tx = db.transaction(['projects', 'tasks', 'notes', 'whiteboards', 'assets'], 'readwrite');
   for (const p of payload.projects) {
     tx.objectStore('projects').put(p);
   }
@@ -239,8 +304,46 @@ export async function applyStoreEffects(db, effects) {
         await db.put('meta', { key: 'preferences', value: effect.preferences });
         break;
 
+      case 'persist_trash_item':
+        await db.put('trash', effect.item);
+        break;
+
+      case 'persist_trash_items': {
+        const tx = db.transaction('trash', 'readwrite');
+        for (const item of effect.items) {
+          tx.objectStore('trash').put(item);
+        }
+        await tx.done;
+        break;
+      }
+
+      case 'remove_trash_item':
+        await db.delete('trash', effect.id);
+        break;
+
+      case 'remove_trash_items': {
+        const tx = db.transaction('trash', 'readwrite');
+        for (const id of effect.ids) {
+          tx.objectStore('trash').delete(id);
+        }
+        await tx.done;
+        break;
+      }
+
+      case 'persist_template':
+        await db.put('templates', effect.template);
+        break;
+
+      case 'remove_template':
+        await db.delete('templates', effect.id);
+        break;
+
       case 'persist_replace_all':
         // Handled explicitly via replaceAllWithBlobs so binary blobs are written atomically.
+        break;
+
+      case 'persist_merge':
+        // Handled explicitly via mergeWithBlobs so binary blobs are written atomically.
         break;
     }
   }
@@ -299,8 +402,7 @@ export function acquireWriteLock() {
 
 /**
  * Wait in the Web Locks queue until the exclusive write lock becomes available
- * (handles abrupt tab closes or crashes where beforeunload does not fire).
- * @param {(handle: { acquired: true; release: () => void }) => void} onAcquired
+ * (handles abrupt tab closes or crashes where beforeunload does not fire).\n * @param {(handle: { acquired: true; release: () => void }) => void} onAcquired
  * @returns {() => void} Cancel function if the tab unloads before acquiring
  */
 export function waitForWriteLock(onAcquired) {

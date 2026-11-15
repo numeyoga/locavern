@@ -131,4 +131,85 @@ test.describe('AppShell Covenant & accessibilité (Étape 1)', () => {
       bodyFontSize: '16.25px',
     });
   });
+
+  test('palette Ctrl+K et recherche plein contenu ouvrent projets, tâches, notes et tableaux blancs', async ({
+    page,
+  }) => {
+    await page.goto('/');
+
+    // Créer un projet, une tâche avec checklist/description, une note avec contenu et un tableau blanc
+    await page.getByRole('button', { name: 'Créer un projet' }).click();
+    await page.locator('#project-name-input').fill('Projet Palette');
+    await page.locator('#modal-project button[type="submit"]').click();
+
+    await page.locator('#btn-new-task').click();
+    await page.locator('#task-title-input').fill('Tâche Palette');
+    await page.locator('#task-checklist-new').fill('Vérifier sauvegarde cryptée');
+    await page.getByRole('button', { name: 'Ajouter', exact: true }).click();
+    await page
+      .locator('#drawer-task [contenteditable="true"]')
+      .fill('Description détaillée hors-ligne');
+    await page.locator('#drawer-task button[type="submit"]').click();
+
+    // Rechercher par le texte de la checklist dans la vue Liste
+    await page.locator('#list-search-input').fill('cryptee');
+    await expect(page.locator('tbody')).toContainText('Tâche Palette');
+    await page.locator('#list-search-input').fill('');
+
+    await page.locator('[data-nav-view="notes"]').click();
+    await page.getByRole('button', { name: 'Créer une note' }).click();
+    await page.locator('#note-dialog-title-input').fill('Note Palette');
+    await page
+      .locator('#dialog-note [contenteditable="true"]')
+      .fill('Compte-rendu architecture locale');
+    await page.locator('#dialog-note button[type="submit"]').click();
+
+    // Rechercher par le contenu Tiptap dans la vue Notes
+    await page.locator('#notes-search-input').fill('architecture');
+    await expect(page.locator('.lc-notes-list')).toContainText('Note Palette');
+    await page.locator('#notes-search-input').fill('');
+
+    await page.locator('[data-nav-view="whiteboards"]').click();
+    await page.getByRole('button', { name: 'Créer un tableau blanc' }).click();
+    await page.locator('#whiteboard-dialog-title-input').fill('Tableau Palette');
+    await page.locator('#dialog-whiteboard button[type="submit"]').click();
+
+    // Ouvrir Ctrl+K, filtrer le projet et naviguer via Entrée
+    await page.keyboard.press('Control+k');
+    await expect(page.locator('#cmd-menu')).toBeVisible();
+    const cmdInput = page.locator('#cmd-menu .cv-cmd__input');
+    await cmdInput.fill('Projet Palette');
+    await expect(page.locator('#cmd-list [data-value^="open:project:"]')).toBeVisible();
+    const axeCmd = await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+      .analyze();
+    expect(axeCmd.violations).toEqual([]);
+    await cmdInput.press('Enter');
+    await expect(page.locator('#topbar-title')).toHaveText('Tâches');
+
+    // Ouvrir la tâche directement via Ctrl+K en cherchant un mot de sa description
+    await page.keyboard.press('Control+k');
+    await cmdInput.fill('detaillee');
+    await expect(page.locator('#cmd-list [data-value^="open:task:"]')).toBeVisible();
+    await cmdInput.press('Enter');
+    await expect(page.locator('#drawer-task')).toBeVisible();
+    await expect(page.locator('#task-title-input')).toHaveValue('Tâche Palette');
+    await page.locator('#drawer-task [data-cv-close]').first().click();
+
+    // Ouvrir la note directement via Ctrl+K en cherchant un mot de son contenu
+    await page.keyboard.press('Control+k');
+    await cmdInput.fill('architecture');
+    await expect(page.locator('#cmd-list [data-value^="open:note:"]')).toBeVisible();
+    await cmdInput.press('Enter');
+    await expect(page.locator('#topbar-title')).toHaveText('Notes');
+    await expect(page.locator('#note-title-input')).toHaveValue('Note Palette');
+
+    // Ouvrir le tableau blanc directement via Ctrl+K
+    await page.keyboard.press('Control+k');
+    await cmdInput.fill('Tableau Palette');
+    await expect(page.locator('#cmd-list [data-value^="open:whiteboard:"]')).toBeVisible();
+    await cmdInput.press('Enter');
+    await expect(page.locator('#topbar-title')).toHaveText('Tableaux blancs');
+    await expect(page.locator('#whiteboard-title-input')).toHaveValue('Tableau Palette');
+  });
 });

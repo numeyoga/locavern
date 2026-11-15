@@ -1,10 +1,13 @@
-/** @import { AppCommand, AppState, StoreEffect, Whiteboard, WhiteboardElement, WhiteboardViewport } from '../../types.d.ts' */
+/** @import { AppCommand, AppState, LocalRef, StoreEffect, Whiteboard, WhiteboardElement, WhiteboardViewport } from '../../types.d.ts' */
 
 import { collectWhiteboardAssetIds } from '../../core/model.js';
-import { selectProjectById, selectWhiteboards } from '../../core/store.js';
+import { selectProjectById, selectTemplates, selectWhiteboards } from '../../core/store.js';
+import { instantiateWhiteboardTemplate } from '../../core/templates.js';
+import { createTemplatePicker } from './template-picker.js';
 import { triggerArchiveDownload } from '../archive-file.js';
 import { mountWhiteboardCanvas } from '../whiteboard-canvas.js';
 import { confirmAction, notify } from './app-shell.js';
+import { createLinkEditor } from './link-editor.js';
 
 /**
  * Sanitize a whiteboard title into a safe local filename stem.
@@ -37,6 +40,7 @@ function toSafeFileStem(title) {
  *   resolveAssetUrl: (assetId: string) => Promise<string | null>;
  *   uploadLocalImage: (file: File) => Promise<{ assetId: string; alt: string } | null>;
  *   onOpenWhiteboardDialog?: (opts?: { whiteboard?: Whiteboard; defaultProjectId?: string | null }) => void;
+ *   onNavigateLocalRef?: (ref: LocalRef) => void;
  * }} opts
  * @returns {{ flushAndDestroy: () => void; isDispatchingInline: () => boolean }}
  */
@@ -47,6 +51,7 @@ export function renderWhiteboardView({
   resolveAssetUrl,
   uploadLocalImage,
   onOpenWhiteboardDialog,
+  onNavigateLocalRef,
 }) {
   const initialState = store.getState();
 
@@ -88,7 +93,7 @@ export function renderWhiteboardView({
   searchInput.id = 'whiteboards-search-input';
   searchInput.type = 'search';
   searchInput.className = 'cv-input';
-  searchInput.placeholder = 'Rechercher un tableau blanc';
+  searchInput.placeholder = 'Rechercher titre ou texte du tableau';
   searchInput.setAttribute('aria-label', 'Rechercher un tableau blanc');
   searchInput.value = filters.query;
   searchGroup.append(searchIcon, searchInput);
@@ -266,6 +271,21 @@ export function renderWhiteboardView({
 
       metaRow.append(titleField, projField);
 
+      const linkEditor = createLinkEditor({
+        idPrefix: 'whiteboard-links',
+        state,
+        currentRef: { kind: 'whiteboard', id: currentWb.id },
+        initialLinks: currentWb.links ?? [],
+        readOnly,
+        onChange() {
+          saveNow(false);
+        },
+        onNavigate(ref) {
+          flushPending?.();
+          onNavigateLocalRef?.(ref);
+        },
+      });
+
       const canvasHost = document.createElement('div');
       /** @type {WhiteboardViewport} */
       let latestViewport = currentWb.viewport;
@@ -288,6 +308,7 @@ export function renderWhiteboardView({
         const snapshot = canvasHandle
           ? canvasHandle.getSnapshot()
           : { viewport: latestViewport, elements: [...latestElements] };
+        const links = linkEditor.getLinks();
         const assetIds = collectWhiteboardAssetIds(snapshot.elements);
         const projectId = projSelect.value ? projSelect.value : null;
         dirty = false;
@@ -304,6 +325,7 @@ export function renderWhiteboardView({
               projectId,
               viewport: snapshot.viewport,
               elements: snapshot.elements,
+              links,
               assetIds,
             },
             now: new Date().toISOString(),
@@ -439,7 +461,7 @@ export function renderWhiteboardView({
       deleteBtn.addEventListener('click', async () => {
         const confirmed = await confirmAction({
           title: `Supprimer « ${currentWb.title} » ?`,
-          message: 'Ce tableau blanc sera définitivement supprimé.',
+          message: 'Ce tableau blanc sera déplacé dans la corbeille locale.',
           confirmLabel: 'Supprimer le tableau blanc',
           danger: true,
         });
@@ -449,13 +471,98 @@ export function renderWhiteboardView({
           saveTimer = null;
         }
         dirty = false;
-        store.dispatch({ type: 'delete_whiteboard', id: currentWb.id });
-        notify({ status: 'info', title: 'Tableau blanc supprimé', text: currentWb.title });
+        store.dispatch({
+          type: 'trash_whiteboard',
+          id: currentWb.id,
+          trashId: crypto.randomUUID(),
+          now: new Date().toISOString(),
+        });
+        notify({
+          status: 'info',
+          title: 'Tableau blanc placé dans la corbeille',
+          text: currentWb.title,
+        });
+      });
+
+      const wbTemplatePicker = createTemplatePicker({
+        idPrefix: 'wb-tpl',
+        labelText: 'Modèles de canevas',
+        templates: selectTemplates(store.getState(), 'whiteboard'),
+        readOnly,
+        showSave: true,
+        async onApply(tpl) {
+          const snapshot = canvasHandle
+            ? canvasHandle.getSnapshot()
+            : { viewport: latestViewport, elements: [...latestElements] };
+          if (snapshot.elements.length > 0) {
+            const confirmed = await confirmAction({
+              title: `Appliquer le modèle « ${tpl.name} » ?`,
+              message: 'Les éléments actuels du tableau blanc seront remplacés par ceux du modèle.',
+              confirmLabel: 'Appliquer le modèle',
+            });
+            if (!confirmed) return;
+          }
+          if (saveTimer !== null) {
+            window.clearTimeout(saveTimer);
+            saveTimer = null;
+          }
+          dirty = false;
+          const cleanTitle = titleInput.value.trim() || currentWb.title;
+          const projectId = projSelect.value ? projSelect.value : null;
+          const links = linkEditor.getLinks();
+          const instantiated = instantiateWhiteboardTemplate(tpl, () => crypto.randomUUID());
+          store.dispatch({
+            type: 'update_whiteboard',
+            id: currentWb.id,
+            patch: {
+              title: cleanTitle,
+              projectId,
+              viewport: instantiated.viewport,
+              elements: instantiated.elements,
+              links,
+              assetIds: [],
+            },
+            now: new Date().toISOString(),
+          });
+          notify({ status: 'success', title: 'Modèle de canevas appliqué', text: tpl.name });
+        },
+        onSaveNew(name) {
+          const snapshot = canvasHandle
+            ? canvasHandle.getSnapshot()
+            : { viewport: latestViewport, elements: [...latestElements] };
+          const reusable = snapshot.elements.filter((el) => el.type !== 'image');
+          if (reusable.length === 0) {
+            notify({
+              status: 'warning',
+              title: 'Canevas vide',
+              text: 'Ajoutez au moins une forme, un post-it ou une flèche avant d’enregistrer un modèle.',
+            });
+            return false;
+          }
+          const id = crypto.randomUUID();
+          store.dispatch({
+            type: 'create_template',
+            id,
+            kind: 'whiteboard',
+            name,
+            elements: reusable,
+            viewport: snapshot.viewport,
+            now: new Date().toISOString(),
+          });
+          wbTemplatePicker.setTemplates(selectTemplates(store.getState(), 'whiteboard'), id);
+          notify({ status: 'success', title: 'Modèle de canevas enregistré', text: name });
+          return id;
+        },
+        onDeleteCustom(tpl) {
+          store.dispatch({ type: 'delete_template', id: tpl.id });
+          wbTemplatePicker.setTemplates(selectTemplates(store.getState(), 'whiteboard'));
+          notify({ status: 'info', title: 'Modèle supprimé', text: tpl.name });
+        },
       });
 
       actions.append(openDialogBtn, exportSvgBtn, exportPngBtn, deleteBtn, saveBtn);
       footer.append(statusEl, actions);
-      editorCard.append(metaRow, canvasHost, footer);
+      editorCard.append(metaRow, linkEditor.element, canvasHost, footer, wbTemplatePicker.element);
     }
 
     layout.append(listEl, editorCard);

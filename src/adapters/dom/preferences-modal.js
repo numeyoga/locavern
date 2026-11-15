@@ -1,28 +1,28 @@
-/** @import { ActiveView, AppCommand, AppState, InputPresentation, StoreEffect } from '../../types.d.ts' */
+/** @import { InputPresentationScreen, AppCommand, AppState, InputPresentation, StoreEffect } from '../../types.d.ts' */
 
 import {
-  ACTIVE_VIEWS,
+  INPUT_PRESENTATION_SCREENS,
   MAX_TOAST_DURATION_SECONDS,
+  MAX_TRASH_RETENTION_DAYS,
   MIN_TOAST_DURATION_SECONDS,
+  MIN_TRASH_RETENTION_DAYS,
 } from '../../core/model.js';
 import { closeDialogById, openDialogById } from './app-shell.js';
 
 /**
- * Parse and validate a raw duration string in seconds (integer between 1 and 60).
+ * Parse and validate an integer string within [min, max].
  * @param {string} raw
+ * @param {number} min
+ * @param {number} max
  * @returns {{ ok: true; value: number } | { ok: false }}
  */
-function parseToastDurationInput(raw) {
+function parseBoundedIntInput(raw, min, max) {
   const trimmed = raw.trim();
   if (!/^\d+$/.test(trimmed)) {
     return { ok: false };
   }
   const value = Number.parseInt(trimmed, 10);
-  if (
-    !Number.isInteger(value) ||
-    value < MIN_TOAST_DURATION_SECONDS ||
-    value > MAX_TOAST_DURATION_SECONDS
-  ) {
+  if (!Number.isInteger(value) || value < min || value > max) {
     return { ok: false };
   }
   return { ok: true, value };
@@ -30,7 +30,7 @@ function parseToastDurationInput(raw) {
 
 /**
  * Wire display preferences controls inside #modal-preferences
- * (per-screen input presentation and toast auto-dismiss duration).
+ * (per-screen input presentation, toast auto-dismiss duration, and trash retention delay).
  * @param {{
  *   store: {
  *     getState: () => AppState;
@@ -55,6 +55,10 @@ export function wirePreferencesModal({ store }) {
     modalEl.querySelector('#pref-toast-duration')
   );
   const durationError = modalEl.querySelector('#pref-toast-duration-error');
+  const retentionInput = /** @type {HTMLInputElement | null} */ (
+    modalEl.querySelector('#pref-trash-retention')
+  );
+  const retentionError = modalEl.querySelector('#pref-trash-retention-error');
   const openStatusesBtn = modalEl.querySelector('#btn-pref-open-statuses');
 
   openStatusesBtn?.addEventListener('click', () => {
@@ -93,18 +97,53 @@ export function wirePreferencesModal({ store }) {
     }
   }
 
+  function clearRetentionError() {
+    if (!retentionInput) return;
+    retentionInput.removeAttribute('aria-invalid');
+    retentionInput.setAttribute('aria-describedby', 'pref-trash-retention-hint');
+    if (retentionError instanceof HTMLElement) {
+      retentionError.hidden = true;
+      retentionError.replaceChildren();
+    }
+  }
+
+  function showRetentionError() {
+    if (!retentionInput) return;
+    retentionInput.setAttribute('aria-invalid', 'true');
+    retentionInput.setAttribute(
+      'aria-describedby',
+      'pref-trash-retention-error pref-trash-retention-hint',
+    );
+    if (retentionError instanceof HTMLElement) {
+      const icon = document.createElement('i');
+      icon.className = 'ph ph-warning-circle cv-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      retentionError.replaceChildren(
+        icon,
+        document.createTextNode(
+          `Délai invalide : saisissez un entier entre ${MIN_TRASH_RETENTION_DAYS} et ${MAX_TRASH_RETENTION_DAYS} jours.`,
+        ),
+      );
+      retentionError.hidden = false;
+    }
+  }
+
   /**
    * Synchronize preference controls with current store state.
-   * @param {{ forceDuration?: boolean }} [opts]
+   * @param {{ forceDuration?: boolean; forceRetention?: boolean }} [opts]
    */
-  function syncControls({ forceDuration = false } = {}) {
-    const { inputPresentations, toastDurationSeconds } = store.getState().preferences;
+  function syncControls({ forceDuration = false, forceRetention = false } = {}) {
+    const { inputPresentations, toastDurationSeconds, trashRetentionDays } =
+      store.getState().preferences;
     for (const fieldset of modalEl.querySelectorAll('fieldset[data-input-screen]')) {
       const screenAttr = fieldset.getAttribute('data-input-screen');
-      if (!screenAttr || !ACTIVE_VIEWS.includes(/** @type {ActiveView} */ (screenAttr))) {
+      if (
+        !screenAttr ||
+        !INPUT_PRESENTATION_SCREENS.includes(/** @type {InputPresentationScreen} */ (screenAttr))
+      ) {
         continue;
       }
-      const screen = /** @type {ActiveView} */ (screenAttr);
+      const screen = /** @type {InputPresentationScreen} */ (screenAttr);
       const activePresentation = inputPresentations[screen];
       for (const radio of fieldset.querySelectorAll('input[type="radio"]')) {
         if (radio instanceof HTMLInputElement) {
@@ -117,11 +156,20 @@ export function wirePreferencesModal({ store }) {
       durationInput.value = String(toastDurationSeconds);
       clearDurationError();
     }
+
+    if (retentionInput && (forceRetention || document.activeElement !== retentionInput)) {
+      retentionInput.value = String(trashRetentionDays);
+      clearRetentionError();
+    }
   }
 
   function commitDurationInput() {
     if (!durationInput) return;
-    const parsed = parseToastDurationInput(durationInput.value);
+    const parsed = parseBoundedIntInput(
+      durationInput.value,
+      MIN_TOAST_DURATION_SECONDS,
+      MAX_TOAST_DURATION_SECONDS,
+    );
     if (!parsed.ok) {
       showDurationError();
       return;
@@ -130,6 +178,24 @@ export function wirePreferencesModal({ store }) {
     durationInput.value = String(parsed.value);
     if (store.getState().preferences.toastDurationSeconds !== parsed.value) {
       store.dispatch({ type: 'set_toast_duration', seconds: parsed.value });
+    }
+  }
+
+  function commitRetentionInput() {
+    if (!retentionInput) return;
+    const parsed = parseBoundedIntInput(
+      retentionInput.value,
+      MIN_TRASH_RETENTION_DAYS,
+      MAX_TRASH_RETENTION_DAYS,
+    );
+    if (!parsed.ok) {
+      showRetentionError();
+      return;
+    }
+    clearRetentionError();
+    retentionInput.value = String(parsed.value);
+    if (store.getState().preferences.trashRetentionDays !== parsed.value) {
+      store.dispatch({ type: 'set_trash_retention_days', days: parsed.value });
     }
   }
 
@@ -142,14 +208,22 @@ export function wirePreferencesModal({ store }) {
       return;
     }
 
+    if (target === retentionInput) {
+      commitRetentionInput();
+      return;
+    }
+
     if (target.type !== 'radio') return;
     const fieldset = target.closest('fieldset[data-input-screen]');
     if (!fieldset) return;
     const screenAttr = fieldset.getAttribute('data-input-screen');
-    if (!screenAttr || !ACTIVE_VIEWS.includes(/** @type {ActiveView} */ (screenAttr))) {
+    if (
+      !screenAttr ||
+      !INPUT_PRESENTATION_SCREENS.includes(/** @type {InputPresentationScreen} */ (screenAttr))
+    ) {
       return;
     }
-    const screen = /** @type {ActiveView} */ (screenAttr);
+    const screen = /** @type {InputPresentationScreen} */ (screenAttr);
     const presentation = /** @type {InputPresentation} */ (
       target.value === 'modal' ? 'modal' : 'drawer'
     );
@@ -158,7 +232,11 @@ export function wirePreferencesModal({ store }) {
 
   durationInput?.addEventListener('input', () => {
     if (durationInput.getAttribute('aria-invalid') === 'true') {
-      const parsed = parseToastDurationInput(durationInput.value);
+      const parsed = parseBoundedIntInput(
+        durationInput.value,
+        MIN_TOAST_DURATION_SECONDS,
+        MAX_TOAST_DURATION_SECONDS,
+      );
       if (parsed.ok) {
         clearDurationError();
       }
@@ -169,16 +247,37 @@ export function wirePreferencesModal({ store }) {
     commitDurationInput();
   });
 
-  modalEl.addEventListener('close', () => {
-    syncControls({ forceDuration: true });
+  retentionInput?.addEventListener('input', () => {
+    if (retentionInput.getAttribute('aria-invalid') === 'true') {
+      const parsed = parseBoundedIntInput(
+        retentionInput.value,
+        MIN_TRASH_RETENTION_DAYS,
+        MAX_TRASH_RETENTION_DAYS,
+      );
+      if (parsed.ok) {
+        clearRetentionError();
+      }
+    }
   });
 
-  syncControls({ forceDuration: true });
+  retentionInput?.addEventListener('blur', () => {
+    commitRetentionInput();
+  });
+
+  modalEl.addEventListener('close', () => {
+    syncControls({ forceDuration: true, forceRetention: true });
+  });
+
+  syncControls({ forceDuration: true, forceRetention: true });
   store.subscribe(({ command }) => {
     const forceDuration =
       command.type === 'hydrate' ||
       command.type === 'set_toast_duration' ||
       command.type === 'replace_all';
-    syncControls({ forceDuration });
+    const forceRetention =
+      command.type === 'hydrate' ||
+      command.type === 'set_trash_retention_days' ||
+      command.type === 'replace_all';
+    syncControls({ forceDuration, forceRetention });
   });
 }
