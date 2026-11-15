@@ -48,31 +48,36 @@ const TYPE_LABELS = {
   image: 'Image locale',
 };
 
-/** @type {Record<WhiteboardColorToken, { fillVar: string; strokeVar: string; textVar: string }>} */
+/** @type {Record<WhiteboardColorToken, { fillVar: string; strokeVar: string; lineVar: string; textVar: string }>} */
 const COLOR_TOKENS = {
   neutral: {
-    fillVar: '--cv-surface',
-    strokeVar: '--cv-border-strong',
+    fillVar: '--lc-wb-neutral-fill',
+    strokeVar: '--lc-wb-neutral-stroke',
+    lineVar: '--lc-wb-neutral-line',
     textVar: '--cv-fg',
   },
   accent: {
-    fillVar: '--cv-bg-accent-subtle',
-    strokeVar: '--cv-accent-500',
+    fillVar: '--lc-wb-accent-fill',
+    strokeVar: '--lc-wb-accent-stroke',
+    lineVar: '--lc-wb-accent-line',
     textVar: '--cv-fg',
   },
   success: {
-    fillVar: '--cv-success-surface',
-    strokeVar: '--cv-fg-success',
+    fillVar: '--lc-wb-success-fill',
+    strokeVar: '--lc-wb-success-stroke',
+    lineVar: '--lc-wb-success-line',
     textVar: '--cv-fg',
   },
   warning: {
-    fillVar: '--cv-warning-surface',
-    strokeVar: '--cv-fg-warning',
+    fillVar: '--lc-wb-warning-fill',
+    strokeVar: '--lc-wb-warning-stroke',
+    lineVar: '--lc-wb-warning-line',
     textVar: '--cv-fg',
   },
   danger: {
-    fillVar: '--cv-danger-surface',
-    strokeVar: '--cv-fg-danger',
+    fillVar: '--lc-wb-danger-fill',
+    strokeVar: '--lc-wb-danger-stroke',
+    lineVar: '--lc-wb-danger-line',
     textVar: '--cv-fg',
   },
 };
@@ -266,12 +271,17 @@ function measureImageUrl(url) {
  *   resolveAssetUrl: (assetId: string) => Promise<string | null>;
  *   onUploadImage: (file: File) => Promise<{ assetId: string; alt: string } | null>;
  *   onBlockedRemoteImage?: () => void;
+ *   onToggleMaximize?: () => void;
  *   onChange: (next: { viewport: WhiteboardViewport; elements: WhiteboardElement[] }) => void;
  * }} opts
  * @returns {{
  *   getSnapshot: () => { viewport: WhiteboardViewport; elements: WhiteboardElement[] };
  *   exportSvgBlob: () => Promise<Blob>;
  *   exportPngBlob: () => Promise<Blob>;
+ *   getRootElement: () => HTMLElement;
+ *   setMaximized: (next: boolean) => void;
+ *   focusMaximizeButton: () => void;
+ *   cancelActiveInteraction: () => boolean;
  *   destroy: () => void;
  * }}
  */
@@ -284,6 +294,7 @@ export function mountWhiteboardCanvas({
   resolveAssetUrl,
   onUploadImage,
   onBlockedRemoteImage,
+  onToggleMaximize,
   onChange,
 }) {
   const uid = `lc-wb-${Math.random().toString(36).slice(2, 8)}`;
@@ -319,6 +330,7 @@ export function mountWhiteboardCanvas({
   const renderedGroups = new Map();
 
   let destroyed = false;
+  let maximized = false;
 
   const root = document.createElement('div');
   root.className = 'lc-wb-container';
@@ -658,6 +670,22 @@ export function mountWhiteboardCanvas({
 
   zoomGroup.append(zoomOutBtn, zoomResetBtn, zoomInBtn, fitViewBtn);
 
+  /** @type {HTMLButtonElement | null} */
+  let maximizeBtn = null;
+  if (onToggleMaximize) {
+    maximizeBtn = createToolbarBtn({
+      icon: 'ph-arrows-out-simple',
+      label: 'Afficher en taille maximum',
+      action: 'toggle-maximize',
+      toggle: true,
+    });
+    maximizeBtn.title = 'Afficher en taille maximum';
+    maximizeBtn.addEventListener('click', () => {
+      onToggleMaximize();
+    });
+    zoomGroup.append(maximizeBtn);
+  }
+
   if (editable) {
     toolbar.append(toolsGroup, colorGroup, selectionGroup, historyGroup, gridGroup, zoomGroup);
   } else {
@@ -949,6 +977,15 @@ export function mountWhiteboardCanvas({
     root.dataset.wbActiveTool = activeTool;
     root.dataset.wbGrid = String(gridVisible);
     root.dataset.wbSnap = String(snapToGrid);
+    root.dataset.wbMaximized = String(maximized);
+    if (maximizeBtn) {
+      maximizeBtn.setAttribute('aria-pressed', String(maximized));
+      maximizeBtn.title = maximized ? 'Quitter la taille maximum' : 'Afficher en taille maximum';
+      const iconEl = maximizeBtn.querySelector('i');
+      if (iconEl) {
+        iconEl.className = `ph ${maximized ? 'ph-arrows-in-simple' : 'ph-arrows-out-simple'} cv-icon`;
+      }
+    }
     gridBtn.setAttribute('aria-pressed', String(gridVisible));
     snapBtn.disabled = !editable;
     snapBtn.setAttribute('aria-pressed', String(snapToGrid));
@@ -1520,6 +1557,7 @@ export function mountWhiteboardCanvas({
       closeTextEditor(true);
     } else if (e.key === 'Escape') {
       e.preventDefault();
+      e.stopPropagation();
       closeTextEditor(false);
     }
   });
@@ -2543,8 +2581,12 @@ export function mountWhiteboardCanvas({
       announce(`${allIds.length} élément(s) sélectionné(s)`);
     } else if (e.key === 'Escape') {
       if (pointerState) {
+        e.preventDefault();
         pointerState = null;
         draftLayer.replaceChildren();
+        return;
+      }
+      if (maximized) {
         return;
       }
       if (editable && activeTool !== 'select') {
@@ -2563,40 +2605,66 @@ export function mountWhiteboardCanvas({
    */
   async function buildStandaloneSvg() {
     const computed = getComputedStyle(root);
+    /**
+     * Resolve a CSS value or custom property reference (including chained var(--..., ...)).
+     * @param {string} expr
+     * @param {string} fallback
+     * @param {number} [depth]
+     * @returns {string}
+     */
+    const resolveCssExpr = (expr, fallback, depth = 0) => {
+      const trimmed = expr.trim();
+      if (!trimmed) return fallback;
+      if (depth > 8) return fallback;
+      const resolved = trimmed.replace(
+        /var(s*(--[A-Za-z0-9_-]+)s*(?:,s*([^)]+))?)/g,
+        (_m, varName, innerFallback) => {
+          const propVal = computed.getPropertyValue(varName).trim();
+          if (propVal) return resolveCssExpr(propVal, innerFallback || fallback, depth + 1);
+          return innerFallback ? resolveCssExpr(innerFallback, fallback, depth + 1) : fallback;
+        },
+      );
+      return resolved.trim() || fallback;
+    };
     const readVar = (/** @type {string} */ name, /** @type {string} */ fallback) => {
       const val = computed.getPropertyValue(name).trim();
-      return val || fallback;
+      return val ? resolveCssExpr(val, fallback) : fallback;
     };
 
-    const bgColor = readVar('--cv-surface', '#ffffff');
+    const bgColor = readVar('--cv-bg', '#fafafa');
     const fgColor = readVar('--cv-fg', '#18181b');
     const fontFamily = readVar('--cv-font-sans', 'sans-serif');
 
-    /** @type {Record<WhiteboardColorToken, { fill: string; stroke: string; text: string }>} */
+    /** @type {Record<WhiteboardColorToken, { fill: string; stroke: string; line: string; text: string }>} */
     const palette = {
       neutral: {
         fill: readVar(COLOR_TOKENS.neutral.fillVar, '#ffffff'),
         stroke: readVar(COLOR_TOKENS.neutral.strokeVar, '#d4d4d8'),
+        line: readVar(COLOR_TOKENS.neutral.lineVar, fgColor),
         text: readVar(COLOR_TOKENS.neutral.textVar, fgColor),
       },
       accent: {
         fill: readVar(COLOR_TOKENS.accent.fillVar, '#fff7ed'),
         stroke: readVar(COLOR_TOKENS.accent.strokeVar, '#ea580c'),
+        line: readVar(COLOR_TOKENS.accent.lineVar, '#ea580c'),
         text: readVar(COLOR_TOKENS.accent.textVar, fgColor),
       },
       success: {
         fill: readVar(COLOR_TOKENS.success.fillVar, '#f0fdf4'),
         stroke: readVar(COLOR_TOKENS.success.strokeVar, '#15803d'),
+        line: readVar(COLOR_TOKENS.success.lineVar, '#15803d'),
         text: readVar(COLOR_TOKENS.success.textVar, fgColor),
       },
       warning: {
         fill: readVar(COLOR_TOKENS.warning.fillVar, '#fefce8'),
         stroke: readVar(COLOR_TOKENS.warning.strokeVar, '#a16207'),
+        line: readVar(COLOR_TOKENS.warning.lineVar, '#a16207'),
         text: readVar(COLOR_TOKENS.warning.textVar, fgColor),
       },
       danger: {
         fill: readVar(COLOR_TOKENS.danger.fillVar, '#fdf2f8'),
         stroke: readVar(COLOR_TOKENS.danger.strokeVar, '#be123c'),
+        line: readVar(COLOR_TOKENS.danger.lineVar, '#be123c'),
         text: readVar(COLOR_TOKENS.danger.textVar, fgColor),
       },
     };
@@ -2634,7 +2702,7 @@ export function mountWhiteboardCanvas({
 
     const markersXml = WHITEBOARD_COLORS.map((colorToken) => {
       const c = palette[colorToken];
-      return `<marker id="export-arrow-${colorToken}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 10 5 L 0 9 z" fill="${escapeXml(c.stroke)}" /></marker>`;
+      return `<marker id="export-arrow-${colorToken}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 10 5 L 0 9 z" fill="${escapeXml(c.line)}" /></marker>`;
     }).join('');
 
     const ordered = [...elements].sort((a, b) => a.zIndex - b.zIndex);
@@ -2663,7 +2731,7 @@ export function mountWhiteboardCanvas({
           const start = pts[0] ?? [0, 0];
           const end = pts[pts.length - 1] ?? [el.width, el.height];
           parts.push(
-            `<line x1="${start[0]}" y1="${start[1]}" x2="${end[0]}" y2="${end[1]}" stroke="${escapeXml(c.stroke)}" stroke-width="2.5" stroke-linecap="round" marker-end="url(#export-arrow-${el.color})" />`,
+            `<line x1="${start[0]}" y1="${start[1]}" x2="${end[0]}" y2="${end[1]}" stroke="${escapeXml(c.line)}" stroke-width="2.5" stroke-linecap="round" marker-end="url(#export-arrow-${el.color})" />`,
           );
         } else if (el.type === 'path') {
           const d = pointsToPathD(
@@ -2673,7 +2741,7 @@ export function mountWhiteboardCanvas({
             ],
           );
           parts.push(
-            `<path d="${escapeXml(d)}" fill="none" stroke="${escapeXml(c.stroke)}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />`,
+            `<path d="${escapeXml(d)}" fill="none" stroke="${escapeXml(c.line)}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />`,
           );
         } else if (el.type === 'image' && el.assetId) {
           const href = embeddedImages.get(el.assetId);
@@ -2767,6 +2835,36 @@ export function mountWhiteboardCanvas({
       } finally {
         URL.revokeObjectURL(svgUrl);
       }
+    },
+
+    getRootElement() {
+      return root;
+    },
+
+    setMaximized(next) {
+      maximized = Boolean(next);
+      if (!maximized && pointerState) {
+        pointerState = null;
+        draftLayer.replaceChildren();
+      }
+      syncToolbarState();
+    },
+
+    focusMaximizeButton() {
+      maximizeBtn?.focus();
+    },
+
+    cancelActiveInteraction() {
+      if (editingTextElementId !== null) {
+        closeTextEditor(false);
+        return true;
+      }
+      if (pointerState) {
+        pointerState = null;
+        draftLayer.replaceChildren();
+        return true;
+      }
+      return false;
     },
 
     destroy() {

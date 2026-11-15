@@ -84,5 +84,6 @@ Les images distantes (`https://…`) collées depuis le presse-papiers sont bloq
 
 - **Historique d’édition** : cliquez sur **Annuler (Ctrl+Z)** (`Ctrl+Z`) ou **Rétablir (Ctrl+Y)** (`Ctrl+Y` / `Ctrl+Maj+Z`).
 - **Zoom, ajustement et panoramique** : utilisez **Zoom -**, **100 %**, **Zoom +** et **Ajuster à la vue** dans la barre d’outils, ou `Ctrl + molette` au-dessus du canevas. Avec l’outil **Sélectionner**, glissez sur une zone vide pour déplacer le canevas.
+- **Afficher en taille maximum** : cliquez sur **Afficher en taille maximum** à droite de la barre d’outils pour agrandir le canevas et ses outils en modale sur toute la zone visible du contenu principal. Appuyez sur `Échap`, cliquez en dehors de la fenêtre, cliquez sur **Fermer** ou cliquez à nouveau sur le bouton pour revenir à la vue normale sans perdre votre sélection ni l’historique.
 - **Sauvegarde automatique** : toute modification est enregistrée localement après `200 ms` (`Enregistré localement`). Cliquez sur **Enregistrer** pour forcer une sauvegarde immédiate.
 - **Exporter une image** : cliquez sur **Exporter SVG** pour télécharger un fichier `.svg` autonome (couleurs résolues selon le thème actif, fonds transparents conservés et images locales embarquées, sans la grille ni les cadres de sélection) ou sur **Exporter PNG** pour générer un fichier `.png` localement dans votre navigateur.

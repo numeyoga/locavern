@@ -589,6 +589,21 @@ dialog::backdrop {
 
 /* Native SVG Whiteboard Canvas */
 .lc-wb-container {
+  --lc-wb-neutral-fill: var(--cv-surface);
+  --lc-wb-neutral-stroke: var(--cv-border-strong);
+  --lc-wb-neutral-line: var(--cv-fg);
+  --lc-wb-accent-fill: var(--cv-bg-accent-subtle);
+  --lc-wb-accent-stroke: var(--cv-accent-500);
+  --lc-wb-accent-line: var(--cv-accent-500);
+  --lc-wb-success-fill: var(--cv-success-surface);
+  --lc-wb-success-stroke: var(--cv-fg-success);
+  --lc-wb-success-line: var(--cv-fg-success);
+  --lc-wb-warning-fill: var(--cv-warning-surface);
+  --lc-wb-warning-stroke: var(--cv-fg-warning);
+  --lc-wb-warning-line: var(--cv-fg-warning);
+  --lc-wb-danger-fill: var(--cv-danger-surface);
+  --lc-wb-danger-stroke: var(--cv-fg-danger);
+  --lc-wb-danger-line: var(--cv-fg-danger);
   display: flex;
   flex-direction: column;
   max-width: 100%;
@@ -596,6 +611,24 @@ dialog::backdrop {
   border-radius: var(--cv-radius-md);
   background: var(--cv-surface);
   overflow: hidden;
+}
+
+[data-theme='dark'] .lc-wb-container {
+  --lc-wb-neutral-fill: var(--cv-surface-3);
+  --lc-wb-neutral-stroke: var(--cv-border-control);
+  --lc-wb-neutral-line: var(--cv-fg);
+  --lc-wb-accent-fill: var(--cv-accent-800);
+  --lc-wb-accent-stroke: var(--cv-fg-accent);
+  --lc-wb-accent-line: var(--cv-accent-500);
+  --lc-wb-success-fill: var(--cv-success-700);
+  --lc-wb-success-stroke: var(--cv-fg-success);
+  --lc-wb-success-line: var(--cv-fg-success);
+  --lc-wb-warning-fill: var(--cv-warning-600);
+  --lc-wb-warning-stroke: var(--cv-fg-warning);
+  --lc-wb-warning-line: var(--cv-fg-warning);
+  --lc-wb-danger-fill: var(--cv-danger-700);
+  --lc-wb-danger-stroke: var(--cv-fg-danger);
+  --lc-wb-danger-line: var(--cv-fg-danger);
 }
 
 .lc-wb-container:focus-within {
@@ -649,28 +682,28 @@ dialog::backdrop {
 }
 
 .lc-wb-swatch--neutral {
-  background: var(--cv-surface);
-  border-color: var(--cv-border-strong);
+  background: var(--lc-wb-neutral-fill);
+  border-color: var(--lc-wb-neutral-stroke);
 }
 
 .lc-wb-swatch--accent {
-  background: var(--cv-bg-accent-subtle);
-  border-color: var(--cv-accent-500);
+  background: var(--lc-wb-accent-fill);
+  border-color: var(--lc-wb-accent-stroke);
 }
 
 .lc-wb-swatch--success {
-  background: var(--cv-success-surface);
-  border-color: var(--cv-fg-success);
+  background: var(--lc-wb-success-fill);
+  border-color: var(--lc-wb-success-stroke);
 }
 
 .lc-wb-swatch--warning {
-  background: var(--cv-warning-surface);
-  border-color: var(--cv-fg-warning);
+  background: var(--lc-wb-warning-fill);
+  border-color: var(--lc-wb-warning-stroke);
 }
 
 .lc-wb-swatch--danger {
-  background: var(--cv-danger-surface);
-  border-color: var(--cv-fg-danger);
+  background: var(--lc-wb-danger-fill);
+  border-color: var(--lc-wb-danger-stroke);
 }
 
 .lc-wb-text-editor {
@@ -765,28 +798,28 @@ dialog::backdrop {
 }
 
 .lc-wb-shape[data-color='neutral'] {
-  fill: var(--cv-surface);
-  stroke: var(--cv-border-strong);
+  fill: var(--lc-wb-neutral-fill);
+  stroke: var(--lc-wb-neutral-stroke);
 }
 
 .lc-wb-shape[data-color='accent'] {
-  fill: var(--cv-bg-accent-subtle);
-  stroke: var(--cv-accent-500);
+  fill: var(--lc-wb-accent-fill);
+  stroke: var(--lc-wb-accent-stroke);
 }
 
 .lc-wb-shape[data-color='success'] {
-  fill: var(--cv-success-surface);
-  stroke: var(--cv-fg-success);
+  fill: var(--lc-wb-success-fill);
+  stroke: var(--lc-wb-success-stroke);
 }
 
 .lc-wb-shape[data-color='warning'] {
-  fill: var(--cv-warning-surface);
-  stroke: var(--cv-fg-warning);
+  fill: var(--lc-wb-warning-fill);
+  stroke: var(--lc-wb-warning-stroke);
 }
 
 .lc-wb-shape[data-color='danger'] {
-  fill: var(--cv-danger-surface);
-  stroke: var(--cv-fg-danger);
+  fill: var(--lc-wb-danger-fill);
+  stroke: var(--lc-wb-danger-stroke);
 }
 
 .lc-wb-shape[data-transparent='true'] {
@@ -803,47 +836,47 @@ dialog::backdrop {
 
 .lc-wb-arrow-line[data-color='neutral'],
 .lc-wb-freehand[data-color='neutral'] {
-  stroke: var(--cv-fg);
+  stroke: var(--lc-wb-neutral-line);
 }
 
 .lc-wb-arrow-line[data-color='accent'],
 .lc-wb-freehand[data-color='accent'] {
-  stroke: var(--cv-accent-500);
+  stroke: var(--lc-wb-accent-line);
 }
 
 .lc-wb-arrow-line[data-color='success'],
 .lc-wb-freehand[data-color='success'] {
-  stroke: var(--cv-fg-success);
+  stroke: var(--lc-wb-success-line);
 }
 
 .lc-wb-arrow-line[data-color='warning'],
 .lc-wb-freehand[data-color='warning'] {
-  stroke: var(--cv-fg-warning);
+  stroke: var(--lc-wb-warning-line);
 }
 
 .lc-wb-arrow-line[data-color='danger'],
 .lc-wb-freehand[data-color='danger'] {
-  stroke: var(--cv-fg-danger);
+  stroke: var(--lc-wb-danger-line);
 }
 
 .lc-wb-arrow-head[data-color='neutral'] {
-  fill: var(--cv-fg);
+  fill: var(--lc-wb-neutral-line);
 }
 
 .lc-wb-arrow-head[data-color='accent'] {
-  fill: var(--cv-accent-500);
+  fill: var(--lc-wb-accent-line);
 }
 
 .lc-wb-arrow-head[data-color='success'] {
-  fill: var(--cv-fg-success);
+  fill: var(--lc-wb-success-line);
 }
 
 .lc-wb-arrow-head[data-color='warning'] {
-  fill: var(--cv-fg-warning);
+  fill: var(--lc-wb-warning-line);
 }
 
 .lc-wb-arrow-head[data-color='danger'] {
-  fill: var(--cv-fg-danger);
+  fill: var(--lc-wb-danger-line);
 }
 
 .lc-wb-hit-stroke {
@@ -909,6 +942,63 @@ dialog::backdrop {
   stroke: var(--cv-accent-500);
   stroke-width: 2;
   pointer-events: none;
+}
+
+/* Maximum size whiteboard modal (occupies visible #shell-main) */
+.lc-wb-max-dialog.cv-modal {
+  position: fixed;
+  inset: auto;
+  top: var(--lc-wb-max-top, var(--cv-topbar-h));
+  left: var(--lc-wb-max-left, var(--cv-sidebar-w));
+  width: var(--lc-wb-max-width, calc(100vw - var(--cv-sidebar-w)));
+  height: var(--lc-wb-max-height, calc(100dvh - var(--cv-topbar-h)));
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  overflow: hidden;
+}
+
+.lc-wb-max-dialog.cv-modal[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.lc-wb-max-dialog > .cv-modal__header {
+  padding: var(--cv-space-3) var(--cv-space-4);
+  border-bottom: 1px solid var(--cv-border);
+}
+
+.lc-wb-max-dialog .cv-modal__title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.lc-wb-max-dialog > .lc-wb-max-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--cv-space-3) var(--cv-space-4);
+  overflow-x: hidden;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.lc-wb-max-dialog .lc-wb-container {
+  flex: 1 0 auto;
+  min-height: 0;
+}
+
+.lc-wb-max-dialog .lc-wb-stage {
+  flex: 1 1 auto;
+  min-height: 10rem;
+  height: auto;
+}
+
+@media (max-width: 1023px) {
+  .lc-wb-max-dialog.cv-modal {
+    left: var(--lc-wb-max-left, 0px);
+    width: var(--lc-wb-max-width, 100vw);
+  }
 }
 
 /* Backup modal sections */
@@ -1032,7 +1122,7 @@ dialog::backdrop {
   padding: 0;
   margin: -1px;
   overflow: hidden;
-  clip: rect(0, 0, 0, 0);
+  clip: rect(0 0 0 0);
   white-space: nowrap;
   border: 0;
 }

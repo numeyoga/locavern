@@ -198,6 +198,7 @@ La saisie `Nouveau projet` / `Modifier le projet` s’affiche en `Modale` par d�
 | `Afficher la grille d’alignement`               | Affiche ou masque la grille SVG (`20 px`, active par défaut, exclue des exports `.svg`/`.png`)                                                        |
 | `Magnétisme sur la grille`                      | Active ou désactive l’aimantation sur la grille (`20 px`) lors de la création et du déplacement                                                       |
 | `Zoom -`, `100 %`, `Zoom +`, `Ajuster à la vue` | Ajuste le zoom (`25 %` à `300 %`), réinitialise à `100 %` ou cadre le contenu visible                                                                 |
+| `Afficher en taille maximum`                    | Ouvre le canevas et sa barre d’outils en modale occupant toute la zone visible de `#shell-main` (`#dialog-whiteboard-max`)                            |
 
 - **Pied de carte** : indicateur `Enregistré localement` / `Modifications en cours` (délai `200 ms`), boutons `Ouvrir la saisie`, `Exporter SVG`, `Exporter PNG`, `Supprimer` (envoi en corbeille avec confirmation) et `Enregistrer`.
 
@@ -238,21 +239,21 @@ La palette indexe également les projets, tâches, notes et tableaux blancs loca
 
 Raccourcis clavier globaux et contextuels :
 
-| Contexte                               | Raccourci                                                     | Effet                                                                           |
-| -------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Global                                 | `Ctrl+K` / `Cmd+K`                                            | Ouvre la palette de commandes                                                   |
-| Modales, tiroirs, palette, menu mobile | `Échap`                                                       | Ferme la fenêtre ou le menu ouvert                                              |
-| Palette de commandes                   | `Flèche haut` / `Flèche bas`, `Entrée`                        | Parcourt et exécute l’entrée sélectionnée                                       |
-| Carte Kanban focalisée                 | `Alt + Flèche gauche` / `Alt + Flèche droite`                 | Déplace la carte vers la colonne précédente / suivante                          |
-| Carte Kanban focalisée                 | `Alt + Flèche haut` / `Alt + Flèche bas`                      | Monte / descend la carte parmi les tâches de son projet dans la colonne         |
-| Menu d’actions Kanban ouvert           | `Flèche haut` / `Flèche bas`, `Début`, `Fin`, `Entrée`, `Tab` | Navigue dans les actions, active l’option ou ferme le menu                      |
-| Tâche focalisée dans `Calendrier`      | `Alt` ou `Maj + Flèche gauche/droite`                         | Avance ou reporte l’échéance de `1` jour                                        |
-| Tâche focalisée dans `Calendrier`      | `Alt` ou `Maj + Flèche haut/bas`                              | Avance ou reporte l’échéance de `7` jours                                       |
-| Élément SVG du tableau blanc focalisé  | `Flèches directionnelles` (avec `Maj` pour pas fin `1`)       | Déplace la sélection de `10` unités (`20` si magnétisme actif ; `1` avec `Maj`) |
-| Élément SVG du tableau blanc focalisé  | `Alt + Flèches directionnelles`                               | Redimensionne l’élément de `10` unités (`1` avec `Maj`)                         |
-| Élément SVG du tableau blanc focalisé  | `Maj + Espace`                                                | Ajoute ou retire l’élément focalisé de la sélection multiple                    |
-| Élément SVG du tableau blanc focalisé  | `Page précédente` / `Page suivante`                           | Avance ou recule l’élément d’un niveau dans l’ordre de superposition            |
-| Élément SVG du tableau blanc focalisé  | `Entrée` ou `F2`                                              | Ouvre l’éditeur de texte accessible (`sticky`, `rect`, `ellipse`, `text`)       |
-| Élément SVG du tableau blanc focalisé  | `Suppr` (`Delete`) ou `Retour arrière`                        | Supprime l’ensemble des éléments sélectionnés                                   |
-| Tableau blanc actif                    | `Ctrl+A` / `Cmd+A`, `Ctrl+D` / `Cmd+D`                        | Sélectionne tout / duplique la sélection courante                               |
-| Tableau blanc actif                    | `Ctrl+Z`, `Ctrl+Y` / `Ctrl+Maj+Z`, `Ctrl + molette`, `Échap`  | Annule, rétablit, zoome ou revient à l’outil `Sélectionner`                     |
+| Contexte                               | Raccourci                                                     | Effet                                                                                                                        |
+| -------------------------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Global                                 | `Ctrl+K` / `Cmd+K`                                            | Ouvre la palette de commandes                                                                                                |
+| Modales, tiroirs, palette, menu mobile | `Échap`                                                       | Ferme la fenêtre ou le menu ouvert                                                                                           |
+| Palette de commandes                   | `Flèche haut` / `Flèche bas`, `Entrée`                        | Parcourt et exécute l’entrée sélectionnée                                                                                    |
+| Carte Kanban focalisée                 | `Alt + Flèche gauche` / `Alt + Flèche droite`                 | Déplace la carte vers la colonne précédente / suivante                                                                       |
+| Carte Kanban focalisée                 | `Alt + Flèche haut` / `Alt + Flèche bas`                      | Monte / descend la carte parmi les tâches de son projet dans la colonne                                                      |
+| Menu d’actions Kanban ouvert           | `Flèche haut` / `Flèche bas`, `Début`, `Fin`, `Entrée`, `Tab` | Navigue dans les actions, active l’option ou ferme le menu                                                                   |
+| Tâche focalisée dans `Calendrier`      | `Alt` ou `Maj + Flèche gauche/droite`                         | Avance ou reporte l’échéance de `1` jour                                                                                     |
+| Tâche focalisée dans `Calendrier`      | `Alt` ou `Maj + Flèche haut/bas`                              | Avance ou reporte l’échéance de `7` jours                                                                                    |
+| Élément SVG du tableau blanc focalisé  | `Flèches directionnelles` (avec `Maj` pour pas fin `1`)       | Déplace la sélection de `10` unités (`20` si magnétisme actif ; `1` avec `Maj`)                                              |
+| Élément SVG du tableau blanc focalisé  | `Alt + Flèches directionnelles`                               | Redimensionne l’élément de `10` unités (`1` avec `Maj`)                                                                      |
+| Élément SVG du tableau blanc focalisé  | `Maj + Espace`                                                | Ajoute ou retire l’élément focalisé de la sélection multiple                                                                 |
+| Élément SVG du tableau blanc focalisé  | `Page précédente` / `Page suivante`                           | Avance ou recule l’élément d’un niveau dans l’ordre de superposition                                                         |
+| Élément SVG du tableau blanc focalisé  | `Entrée` ou `F2`                                              | Ouvre l’éditeur de texte accessible (`sticky`, `rect`, `ellipse`, `text`)                                                    |
+| Élément SVG du tableau blanc focalisé  | `Suppr` (`Delete`) ou `Retour arrière`                        | Supprime l’ensemble des éléments sélectionnés                                                                                |
+| Tableau blanc actif                    | `Ctrl+A` / `Cmd+A`, `Ctrl+D` / `Cmd+D`                        | Sélectionne tout / duplique la sélection courante                                                                            |
+| Tableau blanc actif                    | `Ctrl+Z`, `Ctrl+Y` / `Ctrl+Maj+Z`, `Ctrl + molette`, `Échap`  | Annule, rétablit, zoome, ferme l’édition en cours ou revient à l’outil `Sélectionner` (ou ferme la modale en taille maximum) |

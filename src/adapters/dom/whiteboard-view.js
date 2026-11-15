@@ -6,7 +6,7 @@ import { instantiateWhiteboardTemplate } from '../../core/templates.js';
 import { createTemplatePicker } from './template-picker.js';
 import { triggerArchiveDownload } from '../archive-file.js';
 import { mountWhiteboardCanvas } from '../whiteboard-canvas.js';
-import { confirmAction, notify } from './app-shell.js';
+import { closeDialogById, confirmAction, notify, openDialogById } from './app-shell.js';
 import { createLinkEditor } from './link-editor.js';
 
 /**
@@ -22,6 +22,30 @@ function toSafeFileStem(title) {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
   return clean || 'tableau-blanc';
+}
+
+/**
+ * Reparent a DOM node cleanly using Element.prototype.moveBefore when supported.
+ * @param {HTMLElement} targetParent
+ * @param {HTMLElement} node
+ */
+function reparentElement(targetParent, node) {
+  if (node.parentElement === targetParent) return;
+  const moveBeforeFn =
+    'moveBefore' in Element.prototype
+      ? /** @type {((child: Node, before: Node | null) => void) | undefined} */ (
+          Reflect.get(targetParent, 'moveBefore')
+        )
+      : undefined;
+  if (typeof moveBeforeFn === 'function') {
+    try {
+      moveBeforeFn.call(targetParent, node, null);
+      return;
+    } catch {
+      // Fall back to append when moveBefore throws (e.g. disconnected subtree).
+    }
+  }
+  targetParent.append(node);
 }
 
 /**
@@ -116,6 +140,8 @@ export function renderWhiteboardView({
 
   /** @type {ReturnType<typeof mountWhiteboardCanvas> | null} */
   let canvasHandle = null;
+  /** @type {(() => void) | null} */
+  let cleanupMaxDialog = null;
   /** @type {number | null} */
   let saveTimer = null;
   /** @type {(() => void) | null} */
@@ -123,6 +149,8 @@ export function renderWhiteboardView({
   let dispatchingInlineUpdate = false;
 
   function cleanupCanvas() {
+    cleanupMaxDialog?.();
+    cleanupMaxDialog = null;
     if (saveTimer !== null) {
       window.clearTimeout(saveTimer);
       saveTimer = null;
@@ -352,6 +380,141 @@ export function renderWhiteboardView({
         saveTimer = window.setTimeout(() => saveNow(false), 200);
       }
 
+      const maxDialog = /** @type {HTMLDialogElement | null} */ (
+        document.getElementById('dialog-whiteboard-max')
+      );
+      const maxDialogTitle = document.getElementById('dialog-whiteboard-max-title');
+      const maxDialogBody = document.getElementById('dialog-whiteboard-max-body');
+      let maxTearingDown = false;
+      let pointerDownOutsideMaxDialog = false;
+      /** @type {ResizeObserver | null} */
+      let maxResizeObserver = null;
+
+      function syncMaxDialogBounds() {
+        if (!maxDialog) return;
+        const mainEl = document.getElementById('shell-main');
+        if (!mainEl) return;
+        const rect = mainEl.getBoundingClientRect();
+        const top = Math.max(0, Math.round(rect.top));
+        const left = Math.max(0, Math.round(rect.left));
+        const right = Math.min(window.innerWidth, Math.round(rect.right));
+        const width = Math.max(240, right - left);
+        const height = Math.max(240, Math.round(window.innerHeight - top));
+        maxDialog.style.setProperty('--lc-wb-max-top', `${top}px`);
+        maxDialog.style.setProperty('--lc-wb-max-left', `${left}px`);
+        maxDialog.style.setProperty('--lc-wb-max-width', `${width}px`);
+        maxDialog.style.setProperty('--lc-wb-max-height', `${height}px`);
+      }
+
+      /** @param {PointerEvent} e */
+      function handleMaxPointerDown(e) {
+        if (!maxDialog) return;
+        const r = maxDialog.getBoundingClientRect();
+        pointerDownOutsideMaxDialog =
+          e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+      }
+
+      /** @param {MouseEvent} e */
+      function handleMaxClickCapture(e) {
+        if (!maxDialog) return;
+        if (e.target === maxDialog && !pointerDownOutsideMaxDialog) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+        }
+        pointerDownOutsideMaxDialog = false;
+      }
+
+      /** @param {Event} e */
+      function handleMaxCancel(e) {
+        if (canvasHandle?.cancelActiveInteraction()) {
+          e.preventDefault();
+        }
+      }
+
+      function restoreWhiteboardFromMaxDialog() {
+        if (!canvasHandle || !maxDialogBody) return;
+        const wbRoot = canvasHandle.getRootElement();
+        reparentElement(canvasHost, wbRoot);
+        canvasHost.style.minHeight = '';
+        maxDialogBody.replaceChildren();
+        canvasHandle.setMaximized(false);
+      }
+
+      function handleMaxClose() {
+        if (!maxDialog) return;
+        maxDialog.returnValue = '';
+        window.removeEventListener('resize', syncMaxDialogBounds);
+        window.removeEventListener('scroll', syncMaxDialogBounds, true);
+        maxResizeObserver?.disconnect();
+        maxResizeObserver = null;
+        if (maxTearingDown) return;
+        restoreWhiteboardFromMaxDialog();
+        canvasHandle?.focusMaximizeButton();
+      }
+
+      function openMaxDialog() {
+        if (!canvasHandle || !maxDialog || !maxDialogBody || maxDialog.open) return;
+        if (maxDialogTitle) {
+          maxDialogTitle.textContent = titleInput.value.trim() || currentWb.title;
+        }
+        const hostHeight = Math.round(canvasHost.getBoundingClientRect().height);
+        if (hostHeight > 0) {
+          canvasHost.style.minHeight = `${hostHeight}px`;
+        }
+        syncMaxDialogBounds();
+        const wbRoot = canvasHandle.getRootElement();
+        reparentElement(maxDialogBody, wbRoot);
+        canvasHandle.setMaximized(true);
+        openDialogById('dialog-whiteboard-max');
+        window.addEventListener('resize', syncMaxDialogBounds);
+        window.addEventListener('scroll', syncMaxDialogBounds, true);
+        const mainEl = document.getElementById('shell-main');
+        if (mainEl && typeof ResizeObserver === 'function') {
+          maxResizeObserver?.disconnect();
+          maxResizeObserver = new ResizeObserver(() => syncMaxDialogBounds());
+          maxResizeObserver.observe(mainEl);
+        }
+      }
+
+      function closeMaxDialog() {
+        if (!maxDialog || !maxDialog.open) return;
+        closeDialogById('dialog-whiteboard-max');
+      }
+
+      if (maxDialog) {
+        maxDialog.addEventListener('pointerdown', handleMaxPointerDown);
+        maxDialog.addEventListener('click', handleMaxClickCapture, true);
+        maxDialog.addEventListener('cancel', handleMaxCancel);
+        maxDialog.addEventListener('close', handleMaxClose);
+      }
+
+      cleanupMaxDialog = () => {
+        maxTearingDown = true;
+        window.removeEventListener('resize', syncMaxDialogBounds);
+        window.removeEventListener('scroll', syncMaxDialogBounds, true);
+        maxResizeObserver?.disconnect();
+        maxResizeObserver = null;
+        if (maxDialog) {
+          maxDialog.removeEventListener('pointerdown', handleMaxPointerDown);
+          maxDialog.removeEventListener('click', handleMaxClickCapture, true);
+          maxDialog.removeEventListener('cancel', handleMaxCancel);
+          maxDialog.removeEventListener('close', handleMaxClose);
+          if (maxDialog.open) {
+            maxDialog.close();
+          }
+          maxDialog.returnValue = '';
+        }
+        if (canvasHandle) {
+          const wbRoot = canvasHandle.getRootElement();
+          if (wbRoot.parentElement !== canvasHost) {
+            reparentElement(canvasHost, wbRoot);
+          }
+        }
+        canvasHost.style.minHeight = '';
+        maxDialogBody?.replaceChildren();
+        maxTearingDown = false;
+      };
+
       canvasHandle = mountWhiteboardCanvas({
         container: canvasHost,
         initialViewport: currentWb.viewport,
@@ -367,6 +530,15 @@ export function renderWhiteboardView({
             text: 'Seules les images locales enregistrées sur cet appareil sont autorisées.',
           });
         },
+        onToggleMaximize: maxDialog
+          ? () => {
+              if (maxDialog.open) {
+                closeMaxDialog();
+              } else {
+                openMaxDialog();
+              }
+            }
+          : undefined,
         onChange(next) {
           latestViewport = next.viewport;
           latestElements = next.elements;
