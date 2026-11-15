@@ -69,6 +69,7 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
       ['Projets', String(state.projects.length)],
       ['Tâches', String(state.tasks.length)],
       ['Notes', String(state.notes.length)],
+      ['Tableaux blancs', String(state.whiteboards.length)],
       ['Images locales', String(state.assets.length)],
       ['Espace utilisé', formatBytes(storage.usageBytes)],
       ['Quota estimé', formatBytes(storage.quotaBytes)],
@@ -119,7 +120,7 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
     exportDesc.className = 'cv-caption';
     exportDesc.style.margin = '0';
     exportDesc.textContent =
-      'Télécharge une archive ZIP contenant vos projets, tâches, notes et images locales en clair.';
+      'Télécharge une archive ZIP contenant vos projets, tâches, notes, tableaux blancs et images locales en clair.';
     const exportBtn = document.createElement('button');
     exportBtn.type = 'button';
     exportBtn.className = 'cv-btn cv-btn--primary';
@@ -140,7 +141,7 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
         notify({
           status: 'success',
           title: 'Archive exportée',
-          text: `${current.projects.length} projets, ${current.tasks.length} tâches et ${current.notes.length} notes inclus.`,
+          text: `${current.projects.length} projets, ${current.tasks.length} tâches, ${current.notes.length} notes et ${current.whiteboards.length} tableaux blancs inclus.`,
         });
       } catch {
         notify({
@@ -179,28 +180,38 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
     fileInput.disabled = state.readOnly;
     fileField.append(fileLabel, fileInput);
 
-    const importError = document.createElement('div');
+    const importError = document.createElement('span');
+    importError.id = 'import-archive-error';
     importError.className = 'cv-error';
     importError.hidden = true;
+    const importErrIcon = document.createElement('i');
+    importErrIcon.className = 'ph ph-warning-circle cv-icon';
+    importErrIcon.setAttribute('aria-hidden', 'true');
+    const importErrText = document.createElement('span');
+    importError.append(importErrIcon, importErrText);
 
     fileInput.addEventListener('change', async () => {
       importError.hidden = true;
-      importError.textContent = '';
+      importErrText.textContent = '';
+      fileInput.removeAttribute('aria-invalid');
+      fileInput.removeAttribute('aria-describedby');
       const file = fileInput.files?.[0];
       fileInput.value = '';
       if (!file) return;
 
       const parsed = await parseArchiveFile(file);
       if (!parsed.ok) {
-        importError.textContent = parsed.error;
+        importErrText.textContent = parsed.error;
         importError.hidden = false;
+        fileInput.setAttribute('aria-invalid', 'true');
+        fileInput.setAttribute('aria-describedby', 'import-archive-error');
         return;
       }
 
       closeDialogById('modal-backup');
       const confirmed = await confirmAction({
         title: 'Remplacer les données locales ?',
-        message: `Cette archive contient ${parsed.data.projects.length} projets, ${parsed.data.tasks.length} tâches, ${parsed.data.notes.length} notes et ${parsed.data.assets.length} images. Les données actuelles seront remplacées.`,
+        message: `Cette archive contient ${parsed.data.projects.length} projets, ${parsed.data.tasks.length} tâches, ${parsed.data.notes.length} notes, ${parsed.data.whiteboards.length} tableaux blancs et ${parsed.data.assets.length} images. Les données actuelles seront remplacées.`,
         confirmLabel: 'Importer et remplacer',
         danger: true,
       });
@@ -214,7 +225,9 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
           projects: parsed.data.projects,
           tasks: parsed.data.tasks,
           notes: parsed.data.notes,
+          whiteboards: parsed.data.whiteboards,
           assets: parsed.data.assets,
+          taskStatuses: parsed.data.taskStatuses,
         },
       });
       notify({
@@ -244,14 +257,14 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
       const confirmed = await confirmAction({
         title: 'Effacer toutes les données locales ?',
         message:
-          'Tous les projets, tâches, notes et images stockés sur cet appareil seront définitivement supprimés.',
+          'Tous les projets, tâches, notes, tableaux blancs et images stockés sur cet appareil seront définitivement supprimés.',
         confirmLabel: 'Effacer tout',
         danger: true,
       });
       if (!confirmed) return;
 
       onBeforeReplace?.();
-      const emptyPayload = { projects: [], tasks: [], notes: [], assets: [] };
+      const emptyPayload = { projects: [], tasks: [], notes: [], whiteboards: [], assets: [] };
       await replaceAllWithBlobs(db, emptyPayload, new Map());
       store.dispatch({ type: 'replace_all', payload: emptyPayload });
       notify({

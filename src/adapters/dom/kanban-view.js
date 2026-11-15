@@ -1,16 +1,8 @@
 /** @import { AppCommand, AppState, StoreEffect, Task, TaskPriority, TaskStatus } from '../../types.d.ts' */
-
-import { TASK_STATUSES } from '../../core/model.js';
 import { selectKanbanColumns, selectProjectById } from '../../core/store.js';
 import { confirmAction, initCovenant, notify } from './app-shell.js';
+import { openStatusModal } from './status-modal.js';
 import { createTaskWorkspaceHeader } from './task-workspace-header.js';
-
-/** @type {Array<{ status: TaskStatus; title: string }>} */
-const COLUMNS = [
-  { status: 'todo', title: 'À faire' },
-  { status: 'in_progress', title: 'En cours' },
-  { status: 'done', title: 'Terminé' },
-];
 
 /** @type {Record<TaskPriority, { label: string; badgeClass: string }>} */
 const PRIORITY_META = {
@@ -30,7 +22,7 @@ const PRIORITY_META = {
  *   query: string;
  *   onQueryChange: (nextQuery: string) => void;
  *   onOpenNewProject: () => void;
- *   onOpenTaskDrawer: (task?: Task, defaultStatus?: TaskStatus) => void;
+ *   onOpenTaskDrawer: (task?: Task, defaultStatus?: TaskStatus | null) => void;
  * }} opts
  */
 export function renderKanbanView({
@@ -42,11 +34,12 @@ export function renderKanbanView({
   onOpenTaskDrawer,
 }) {
   const state = store.getState();
+  const initialDefaultStatus = state.preferences.taskStatuses[0]?.id ?? null;
 
   const header = createTaskWorkspaceHeader({
     state,
     dispatch: store.dispatch,
-    onOpenNewTask: () => onOpenTaskDrawer(undefined, 'todo'),
+    onOpenNewTask: () => onOpenTaskDrawer(undefined, initialDefaultStatus),
   });
 
   if (state.projects.length === 0) {
@@ -62,7 +55,8 @@ export function renderKanbanView({
     title.className = 'cv-empty__title';
     title.textContent = 'Créez un premier projet pour commencer';
     const desc = document.createElement('p');
-    desc.textContent = 'Le tableau Kanban organise les tâches de vos projets en trois colonnes.';
+    desc.textContent =
+      'Le tableau Kanban organise les tâches de vos projets par colonnes de statut.';
     const cta = document.createElement('button');
     cta.type = 'button';
     cta.className = 'cv-btn cv-btn--primary';
@@ -136,6 +130,35 @@ export function renderKanbanView({
 
   function renderBoard() {
     const currentState = store.getState();
+    const configuredStatuses = currentState.preferences.taskStatuses;
+    const statusIds = configuredStatuses.map((s) => s.id);
+
+    if (configuredStatuses.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'cv-empty';
+      const iconBox = document.createElement('span');
+      iconBox.className = 'cv-empty__icon';
+      const ic = document.createElement('i');
+      ic.className = 'ph ph-columns cv-icon';
+      ic.setAttribute('aria-hidden', 'true');
+      iconBox.append(ic);
+      const title = document.createElement('p');
+      title.className = 'cv-empty__title';
+      title.textContent = 'Aucun statut configuré pour le Kanban';
+      const desc = document.createElement('p');
+      desc.textContent =
+        'Ajoutez au moins un statut ou restaurez les colonnes par défaut pour utiliser le tableau Kanban.';
+      const cta = document.createElement('button');
+      cta.type = 'button';
+      cta.className = 'cv-btn cv-btn--primary';
+      cta.disabled = currentState.readOnly;
+      cta.textContent = 'Configurer les statuts';
+      cta.addEventListener('click', openStatusModal);
+      empty.append(iconBox, title, desc, cta);
+      boardSlot.replaceChildren(empty);
+      return;
+    }
+
     const columnsData = selectKanbanColumns(
       currentState,
       currentState.preferences.selectedProjectId,
@@ -145,20 +168,20 @@ export function renderKanbanView({
     const board = document.createElement('div');
     board.className = 'lc-kanban';
 
-    for (const colMeta of COLUMNS) {
-      const colTasks = columnsData[colMeta.status];
+    for (const colMeta of configuredStatuses) {
+      const colTasks = columnsData[colMeta.id] ?? [];
       const colEl = document.createElement('section');
       colEl.className = 'lc-kanban__col';
-      colEl.dataset.kanbanStatus = colMeta.status;
-      colEl.setAttribute('aria-labelledby', `kanban-col-${colMeta.status}`);
+      colEl.dataset.kanbanStatus = colMeta.id;
+      colEl.setAttribute('aria-labelledby', `kanban-col-${colMeta.id}`);
 
       const colHead = document.createElement('div');
       colHead.className = 'lc-kanban__col-header';
 
       const colTitle = document.createElement('h2');
-      colTitle.id = `kanban-col-${colMeta.status}`;
+      colTitle.id = `kanban-col-${colMeta.id}`;
       colTitle.className = 'lc-kanban__col-title';
-      colTitle.textContent = colMeta.title;
+      colTitle.textContent = colMeta.label;
 
       const colControls = document.createElement('div');
       colControls.className = 'lc-table-actions';
@@ -170,12 +193,12 @@ export function renderKanbanView({
       quickAddBtn.type = 'button';
       quickAddBtn.className = 'cv-btn cv-btn--ghost cv-btn--icon cv-btn--sm';
       quickAddBtn.disabled = currentState.readOnly;
-      quickAddBtn.setAttribute('aria-label', `Ajouter une tâche dans ${colMeta.title}`);
+      quickAddBtn.setAttribute('aria-label', `Ajouter une tâche dans ${colMeta.label}`);
       const addIc = document.createElement('i');
       addIc.className = 'ph ph-plus cv-icon';
       addIc.setAttribute('aria-hidden', 'true');
       quickAddBtn.append(addIc);
-      quickAddBtn.addEventListener('click', () => onOpenTaskDrawer(undefined, colMeta.status));
+      quickAddBtn.addEventListener('click', () => onOpenTaskDrawer(undefined, colMeta.id));
 
       colControls.append(countBadge, quickAddBtn);
       colHead.append(colTitle, colControls);
@@ -210,16 +233,16 @@ export function renderKanbanView({
           .filter(
             (t) =>
               t.projectId === droppedTask.projectId &&
-              t.status === colMeta.status &&
+              t.status === colMeta.id &&
               t.id !== droppedTask.id,
           )
           .sort((a, b) => a.position - b.position);
-        dispatchMove(taskId, colMeta.status, projectColTasks.length);
+        dispatchMove(taskId, colMeta.id, projectColTasks.length);
       });
 
       for (const task of colTasks) {
         const projectSiblings = currentState.tasks
-          .filter((t) => t.projectId === task.projectId && t.status === colMeta.status)
+          .filter((t) => t.projectId === task.projectId && t.status === colMeta.id)
           .sort((a, b) => a.position - b.position);
         const siblingIndex = projectSiblings.findIndex((t) => t.id === task.id);
 
@@ -228,7 +251,7 @@ export function renderKanbanView({
         card.tabIndex = 0;
         card.draggable = !currentState.readOnly;
         card.dataset.kanbanTaskId = task.id;
-        card.setAttribute('aria-label', `${task.title}, ${colMeta.title}`);
+        card.setAttribute('aria-label', `${task.title}, ${colMeta.label}`);
 
         card.addEventListener('dragstart', (event) => {
           if (currentState.readOnly) {
@@ -271,26 +294,27 @@ export function renderKanbanView({
               .filter(
                 (t) =>
                   t.projectId === task.projectId &&
-                  t.status === colMeta.status &&
+                  t.status === colMeta.id &&
                   t.id !== droppedTask.id,
               )
               .sort((a, b) => a.position - b.position);
             const idx = targetSiblings.findIndex((t) => t.id === task.id);
-            dispatchMove(taskId, colMeta.status, idx >= 0 ? idx : targetSiblings.length);
+            dispatchMove(taskId, colMeta.id, idx >= 0 ? idx : targetSiblings.length);
           } else {
             const endLen = currentState.tasks.filter(
-              (t) => t.projectId === droppedTask.projectId && t.status === colMeta.status,
+              (t) => t.projectId === droppedTask.projectId && t.status === colMeta.id,
             ).length;
-            dispatchMove(taskId, colMeta.status, endLen);
+            dispatchMove(taskId, colMeta.id, endLen);
           }
         });
 
         // Keyboard shortcuts on focused card: Alt + ArrowLeft / ArrowRight / ArrowUp / ArrowDown
         card.addEventListener('keydown', (event) => {
           if (currentState.readOnly || !event.altKey) return;
-          const statusIdx = TASK_STATUSES.indexOf(task.status);
-          const nextStatus = TASK_STATUSES[statusIdx + 1];
-          const prevStatus = TASK_STATUSES[statusIdx - 1];
+          const statusIdx = task.status ? statusIds.indexOf(task.status) : -1;
+          if (statusIdx === -1) return;
+          const nextStatus = statusIds[statusIdx + 1];
+          const prevStatus = statusIds[statusIdx - 1];
           if (event.key === 'ArrowRight' && nextStatus) {
             event.preventDefault();
             const endPos = currentState.tasks.filter(
@@ -305,10 +329,10 @@ export function renderKanbanView({
             dispatchMove(task.id, prevStatus, endPos, true);
           } else if (event.key === 'ArrowUp' && siblingIndex > 0) {
             event.preventDefault();
-            dispatchMove(task.id, task.status, siblingIndex - 1, true);
+            dispatchMove(task.id, colMeta.id, siblingIndex - 1, true);
           } else if (event.key === 'ArrowDown' && siblingIndex < projectSiblings.length - 1) {
             event.preventDefault();
-            dispatchMove(task.id, task.status, siblingIndex + 1, true);
+            dispatchMove(task.id, colMeta.id, siblingIndex + 1, true);
           }
         });
 
@@ -367,25 +391,25 @@ export function renderKanbanView({
           sep1.className = 'cv-menu__sep';
           menu.append(sep1);
 
-          for (const targetCol of COLUMNS) {
-            if (targetCol.status !== task.status) {
-              addMenuItem(`Déplacer vers ${targetCol.title}`, () => {
+          for (const targetCol of configuredStatuses) {
+            if (targetCol.id !== task.status) {
+              addMenuItem(`Déplacer vers ${targetCol.label}`, () => {
                 const endPos = currentState.tasks.filter(
-                  (t) => t.projectId === task.projectId && t.status === targetCol.status,
+                  (t) => t.projectId === task.projectId && t.status === targetCol.id,
                 ).length;
-                dispatchMove(task.id, targetCol.status, endPos, true);
+                dispatchMove(task.id, targetCol.id, endPos, true);
               });
             }
           }
 
           if (siblingIndex > 0) {
             addMenuItem('Monter dans la colonne', () => {
-              dispatchMove(task.id, task.status, siblingIndex - 1, true);
+              dispatchMove(task.id, colMeta.id, siblingIndex - 1, true);
             });
           }
           if (siblingIndex < projectSiblings.length - 1) {
             addMenuItem('Descendre dans la colonne', () => {
-              dispatchMove(task.id, task.status, siblingIndex + 1, true);
+              dispatchMove(task.id, colMeta.id, siblingIndex + 1, true);
             });
           }
 

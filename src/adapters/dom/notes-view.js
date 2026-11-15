@@ -1,6 +1,6 @@
-/** @import { AppCommand, AppState, RichTextDoc, StoreEffect } from '../../types.d.ts' */
+/** @import { AppCommand, AppState, Note, RichTextDoc, StoreEffect } from '../../types.d.ts' */
 
-import { EMPTY_RICH_DOC, collectDocAssetIds } from '../../core/model.js';
+import { collectDocAssetIds } from '../../core/model.js';
 import { selectNotes, selectProjectById } from '../../core/store.js';
 import { mountRichTextEditor } from '../rich-text-tiptap.js';
 import { confirmAction, notify } from './app-shell.js';
@@ -20,10 +20,18 @@ import { confirmAction, notify } from './app-shell.js';
  *   };
  *   resolveAssetUrl: (assetId: string) => Promise<string | null>;
  *   uploadLocalImage: (file: File) => Promise<{ assetId: string; alt: string } | null>;
+ *   onOpenNoteDialog?: (opts?: { note?: Note; defaultProjectId?: string | null }) => void;
  * }} opts
- * @returns {{ flushAndDestroy: () => void }}
+ * @returns {{ flushAndDestroy: () => void; isDispatchingInline: () => boolean }}
  */
-export function renderNotesView({ container, store, filters, resolveAssetUrl, uploadLocalImage }) {
+export function renderNotesView({
+  container,
+  store,
+  filters,
+  resolveAssetUrl,
+  uploadLocalImage,
+  onOpenNoteDialog,
+}) {
   const initialState = store.getState();
 
   const header = document.createElement('div');
@@ -91,6 +99,7 @@ export function renderNotesView({ container, store, filters, resolveAssetUrl, up
   let saveTimer = null;
   /** @type {(() => void) | null} */
   let flushPending = null;
+  let dispatchingInlineUpdate = false;
 
   function cleanupEditor() {
     if (saveTimer !== null) {
@@ -101,26 +110,15 @@ export function renderNotesView({ container, store, filters, resolveAssetUrl, up
     editorHandle = null;
   }
 
-  function createNewNote() {
+  function openNewNoteDialog() {
     flushPending?.();
     const state = store.getState();
-    const now = new Date().toISOString();
     const defaultProjId =
-      filters.projectId !== 'all' && filters.projectId !== null
-        ? filters.projectId
-        : state.preferences.selectedProjectId;
-    store.dispatch({
-      type: 'create_note',
-      id: crypto.randomUUID(),
-      projectId: defaultProjId ?? null,
-      title: 'Nouvelle note',
-      contentDoc: EMPTY_RICH_DOC,
-      assetIds: [],
-      now,
-    });
+      filters.projectId === 'all' ? state.preferences.selectedProjectId : filters.projectId;
+    onOpenNoteDialog?.({ defaultProjectId: defaultProjId ?? null });
   }
 
-  newNoteBtn.addEventListener('click', createNewNote);
+  newNoteBtn.addEventListener('click', openNewNoteDialog);
 
   function renderBody() {
     cleanupEditor();
@@ -154,7 +152,7 @@ export function renderNotesView({ container, store, filters, resolveAssetUrl, up
       cta.className = 'cv-btn cv-btn--primary';
       cta.disabled = readOnly;
       cta.textContent = 'Créer une note';
-      cta.addEventListener('click', createNewNote);
+      cta.addEventListener('click', openNewNoteDialog);
       empty.append(iconBox, title, desc, cta);
       bodySlot.replaceChildren(empty);
       return;
@@ -209,7 +207,7 @@ export function renderNotesView({ container, store, filters, resolveAssetUrl, up
 
       const titleField = document.createElement('div');
       titleField.className = 'cv-field';
-      titleField.style.flex = '1 1 240px';
+      titleField.style.flex = '1 1 15rem';
       const titleLabel = document.createElement('label');
       titleLabel.className = 'cv-label';
       titleLabel.htmlFor = 'note-title-input';
@@ -225,7 +223,7 @@ export function renderNotesView({ container, store, filters, resolveAssetUrl, up
 
       const projField = document.createElement('div');
       projField.className = 'cv-field';
-      projField.style.minWidth = '180px';
+      projField.style.minWidth = 'min(100%, 11.25rem)';
       const projLabel = document.createElement('label');
       projLabel.className = 'cv-label';
       projLabel.htmlFor = 'note-project-select';
@@ -276,17 +274,22 @@ export function renderNotesView({ container, store, filters, resolveAssetUrl, up
         statusNote.textContent = 'Enregistrée localement';
         const listTitle = listTitleEls.get(currentNote.id);
         if (listTitle) listTitle.textContent = cleanTitle;
-        store.dispatch({
-          type: 'update_note',
-          id: currentNote.id,
-          patch: {
-            title: cleanTitle,
-            projectId,
-            contentDoc: doc,
-            assetIds,
-          },
-          now: new Date().toISOString(),
-        });
+        dispatchingInlineUpdate = true;
+        try {
+          store.dispatch({
+            type: 'update_note',
+            id: currentNote.id,
+            patch: {
+              title: cleanTitle,
+              projectId,
+              contentDoc: doc,
+              assetIds,
+            },
+            now: new Date().toISOString(),
+          });
+        } finally {
+          dispatchingInlineUpdate = false;
+        }
         if (showToast) {
           notify({ status: 'success', title: 'Note enregistrée', text: cleanTitle });
         }
@@ -346,6 +349,20 @@ export function renderNotesView({ container, store, filters, resolveAssetUrl, up
 
       const actions = document.createElement('div');
       actions.className = 'lc-table-actions';
+      actions.style.flexWrap = 'wrap';
+
+      const openDialogBtn = document.createElement('button');
+      openDialogBtn.type = 'button';
+      openDialogBtn.id = 'btn-open-note-dialog';
+      openDialogBtn.className = 'cv-btn cv-btn--sm';
+      openDialogBtn.textContent = 'Ouvrir la saisie';
+      openDialogBtn.setAttribute('aria-label', `Ouvrir la saisie pour « ${currentNote.title} »`);
+      openDialogBtn.addEventListener('click', () => {
+        flushPending?.();
+        const freshNote =
+          store.getState().notes.find((n) => n.id === currentNote.id) ?? currentNote;
+        onOpenNoteDialog?.({ note: freshNote });
+      });
 
       const saveBtn = document.createElement('button');
       saveBtn.type = 'button';
@@ -378,7 +395,7 @@ export function renderNotesView({ container, store, filters, resolveAssetUrl, up
         notify({ status: 'info', title: 'Note supprimée', text: currentNote.title });
       });
 
-      actions.append(deleteBtn, saveBtn);
+      actions.append(openDialogBtn, deleteBtn, saveBtn);
       footer.append(statusNote, actions);
       editorCard.append(metaRow, editorHost, footer);
     }
@@ -411,6 +428,9 @@ export function renderNotesView({ container, store, filters, resolveAssetUrl, up
     flushAndDestroy() {
       flushPending?.();
       cleanupEditor();
+    },
+    isDispatchingInline() {
+      return dispatchingInlineUpdate;
     },
   };
 }

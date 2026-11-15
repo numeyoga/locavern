@@ -3,13 +3,14 @@ import {
   CURRENT_SCHEMA_VERSION,
   MAX_IMPORT_RECORDS,
   migrateBackupData,
+  parseWhiteboard,
   validateBackupData,
 } from '../../src/core/schema.js';
 
 describe('schema', () => {
   const NOW = '2026-11-13T10:00:00.000Z';
 
-  it('valide un payload v1 conforme et assainit le texte enrichi', () => {
+  it('migre un payload v1 conforme vers v2 et assainit le texte enrichi', () => {
     const payload = {
       schemaVersion: 1,
       exportedAt: NOW,
@@ -49,8 +50,99 @@ describe('schema', () => {
     const result = migrateBackupData(payload);
     expect(result.ok).toBe(true);
     if (result.ok) {
+      expect(result.data.schemaVersion).toBe(2);
+      expect(result.data.whiteboards).toEqual([]);
       expect(result.data.tasks[0]?.descriptionDoc.content).toEqual([{ type: 'paragraph' }]);
     }
+  });
+
+  it('valide un payload v2 avec tableaux blancs et nettoie les éléments invalides', () => {
+    const payload = {
+      schemaVersion: 2,
+      exportedAt: NOW,
+      projects: [
+        {
+          id: 'p1',
+          name: 'Projet 1',
+          description: '',
+          archived: false,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+      tasks: [],
+      notes: [],
+      whiteboards: [
+        {
+          id: 'wb-1',
+          projectId: 'p1',
+          title: 'Diagramme',
+          viewport: { panX: 12, panY: -8, zoom: 1.5 },
+          elements: [
+            {
+              id: 'el-1',
+              type: 'sticky',
+              x: 20,
+              y: 30,
+              width: 160,
+              height: 100,
+              text: 'Note',
+              color: 'accent',
+              transparentBg: true,
+              zIndex: 0,
+            },
+            {
+              id: 'el-remote',
+              type: 'image',
+              x: 0,
+              y: 0,
+              width: 100,
+              height: 100,
+              color: 'neutral',
+              assetId: 'https://evil.test/remote.png',
+              zIndex: 1,
+            },
+          ],
+          assetIds: [],
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+      assets: [],
+    };
+
+    const result = validateBackupData(payload);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.whiteboards).toHaveLength(1);
+      expect(result.data.whiteboards[0]?.elements).toHaveLength(1);
+      expect(result.data.whiteboards[0]?.elements[0]?.transparentBg).toBe(true);
+    }
+  });
+
+  it('rejette un tableau blanc rattaché à un projet inexistant', () => {
+    const res = validateBackupData({
+      schemaVersion: 2,
+      exportedAt: NOW,
+      projects: [],
+      tasks: [],
+      notes: [],
+      whiteboards: [
+        {
+          id: 'wb-1',
+          projectId: 'missing',
+          title: 'Orphelin',
+          viewport: { panX: 0, panY: 0, zoom: 1 },
+          elements: [],
+          assetIds: [],
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+      assets: [],
+    });
+    expect(res.ok).toBe(false);
+    expect(parseWhiteboard({ id: '', title: 'x' })).toBeNull();
   });
 
   it('rejette une version de schéma future inconnue', () => {
@@ -60,7 +152,7 @@ describe('schema', () => {
 
   it('rejette une tâche orpheline dont le projet est absent', () => {
     const res = validateBackupData({
-      schemaVersion: 1,
+      schemaVersion: 2,
       exportedAt: NOW,
       projects: [],
       tasks: [
@@ -80,6 +172,7 @@ describe('schema', () => {
         },
       ],
       notes: [],
+      whiteboards: [],
       assets: [],
     });
     expect(res.ok).toBe(false);
@@ -95,13 +188,94 @@ describe('schema', () => {
       updatedAt: NOW,
     }));
     const res = validateBackupData({
-      schemaVersion: 1,
+      schemaVersion: 2,
       exportedAt: NOW,
       projects,
       tasks: [],
       notes: [],
+      whiteboards: [],
       assets: [],
     });
     expect(res.ok).toBe(false);
+  });
+
+  it('accepte des tâches sans statut, au statut personnalisé ou inconnu ainsi que taskStatuses dans la sauvegarde', () => {
+    const res = validateBackupData({
+      schemaVersion: 2,
+      exportedAt: NOW,
+      taskStatuses: [
+        { id: 'todo', label: 'À faire' },
+        { id: 'review', label: 'En revue' },
+      ],
+      projects: [
+        {
+          id: 'p1',
+          name: 'P1',
+          description: '',
+          archived: false,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+      tasks: [
+        {
+          id: 't-none',
+          projectId: 'p1',
+          title: 'Sans statut',
+          status: null,
+          priority: 'medium',
+          dueDate: null,
+          position: 0,
+          descriptionDoc: { type: 'doc', content: [] },
+          checklist: [],
+          assetIds: [],
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+        {
+          id: 't-custom',
+          projectId: 'p1',
+          title: 'Statut personnalisé',
+          status: 'review',
+          priority: 'high',
+          dueDate: null,
+          position: 0,
+          descriptionDoc: { type: 'doc', content: [] },
+          checklist: [],
+          assetIds: [],
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+        {
+          id: 't-unknown',
+          projectId: 'p1',
+          title: 'Statut supprimé',
+          status: 'old_status',
+          priority: 'low',
+          dueDate: null,
+          position: 0,
+          descriptionDoc: { type: 'doc', content: [] },
+          checklist: [],
+          assetIds: [],
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+      notes: [],
+      whiteboards: [],
+      assets: [],
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.taskStatuses).toEqual([
+        { id: 'todo', label: 'À faire' },
+        { id: 'review', label: 'En revue' },
+      ]);
+      expect(res.data.tasks.map((t) => [t.id, t.status])).toEqual([
+        ['t-none', null],
+        ['t-custom', 'review'],
+        ['t-unknown', 'old_status'],
+      ]);
+    }
   });
 });

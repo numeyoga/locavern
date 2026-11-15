@@ -1,12 +1,12 @@
 ---
-version: '0.1.0'
+version: '0.2.0'
 cree_le: 2026-11-13
-mis_a_jour_le: 2026-11-13
+mis_a_jour_le: 2026-11-14
 ---
 
 # Fonctionnement local, confidentialité et périmètre
 
-Cette page explique les principes de conception de Locavern qui influencent directement votre usage quotidien : stockage sur l’appareil, sécurité des notes, verrouillage multi-onglets et périmètre de la version `0.1.0`.
+Cette page explique les principes de conception de Locavern qui influencent directement votre usage quotidien : stockage sur l’appareil, sécurité des notes et tableaux blancs, verrouillage multi-onglets et périmètre de la version `0.2.0`.
 
 ## Sommaire
 
@@ -18,7 +18,7 @@ Cette page explique les principes de conception de Locavern qui influencent dire
 
 ## Vos données restent sur votre appareil
 
-Locavern suit une approche **local-first** : il n’existe ni création de compte, ni serveur applicatif distant, ni synchronisation automatique en arrière-plan. Vos projets, tâches, notes et images sont conservés uniquement dans la base `IndexedDB` de votre navigateur.
+Locavern suit une approche **local-first** : il n’existe ni création de compte, ni serveur applicatif distant, ni synchronisation automatique en arrière-plan. Vos projets, tâches, notes, tableaux blancs et images sont conservés uniquement dans la base `IndexedDB` de votre navigateur.
 
 Ce choix garantit qu’aucune donnée personnelle ne quitte votre machine, mais il implique aussi que vos données ne sont pas automatiquement partagées entre deux navigateurs ou deux appareils différents : les transferts passent exclusivement par l’export et l’import manuels d’archives ZIP.
 
@@ -36,18 +36,17 @@ Pour prévenir toute perte de données, le premier onglet ouvert acquiert un ver
 
 ## Pourquoi les images distantes et certains liens sont bloqués
 
-Locavern bloque le collage d’images distantes (`https://…`) et n’embarque que des fichiers locaux stockés en binaire dans `IndexedDB`. Deux raisons motivent cette règle :
+Dans les notes comme sur le tableau blanc, Locavern bloque le collage d’images distantes (`https://…`) et n’embarque que des fichiers locaux stockés en binaire dans `IndexedDB`. Deux raisons motivent cette règle :
 
-- **Confidentialité** : afficher une image hébergée sur un serveur tiers déclencherait une requête réseau à chaque ouverture de la note, révélant votre adresse IP et le moment de consultation (effet de pixel espion), ce qui est incompatible avec une politique stricte sans requête externe ;
-- **Disponibilité hors ligne** : une image locale stockée dans `IndexedDB` et incluse dans l’archive ZIP reste affichable sans connexion Internet, même si le site d’origine disparaît.
+- **Confidentialité** : afficher une image hébergée sur un serveur tiers déclencherait une requête réseau à chaque ouverture, révélant votre adresse IP et le moment de consultation (effet de pixel espion), ce qui est incompatible avec une politique stricte sans requête externe ;
+- **Disponibilité hors ligne** : une image locale stockée dans `IndexedDB` et incluse dans l’archive ZIP reste affichable sans connexion Internet, même si le site d’origine disparaît. Lorsqu’un tableau blanc contenant des images locales est exporté en `.svg` ou `.png`, ces images sont rendues localement dans le navigateur afin de produire un fichier autonome sans aucune requête externe.
 
 De la même façon, seuls les liens `https://` et `mailto:` sont acceptés afin d’écarter les schémas potentiellement dangereux ou ambigus dans des contenus importés.
 
 ## Périmètre actuel et fonctionnalités différées
 
-La version `0.1.0` couvre le noyau de productivité : projets, tâches en vue Liste et Kanban, notes enrichies avec images locales et sauvegardes ZIP hors ligne.
+La version `0.2.0` couvre le noyau de productivité (projets, tâches en vue Liste et Kanban, notes enrichies, sauvegardes ZIP hors ligne en `schemaVersion: 2`) ainsi que la vue **Tableaux blancs** (canevas SVG natif accessible, images locales et export SVG/PNG).
 
-Deux fonctions prévues dans la feuille de route ont été volontairement différées après cette première version :
+Une fonction prévue dans la feuille de route reste volontairement différée après cette version :
 
-- **Calendrier des échéances** : vous pouvez déjà attribuer une date d’échéance aux tâches et les trier chronologiquement en vue Liste, mais la vue calendrier mensuelle dédiée viendra dans un lot ultérieur ;
-- **Tableau blanc** : son intégration est reportée afin de définir d’abord un format de sauvegarde durable et indépendant d’un outil tiers.
+- **Calendrier des échéances** : vous pouvez déjà attribuer une date d’échéance aux tâches et les trier chronologiquement en vue Liste, mais la vue calendrier mensuelle dédiée viendra dans un lot ultérieur.

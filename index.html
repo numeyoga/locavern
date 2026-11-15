@@ -57,6 +57,12 @@
               <span>Notes</span>
             </a>
           </li>
+          <li>
+            <a class="cv-nav-item" href="#whiteboards" data-nav-view="whiteboards">
+              <i class="ph ph-chalkboard-simple cv-icon" aria-hidden="true"></i>
+              <span>Tableaux blancs</span>
+            </a>
+          </li>
         </ul>
 
         <div class="cv-overline cv-sidebar__group">Données</div>
@@ -70,6 +76,21 @@
             >
               <i class="ph ph-archive cv-icon" aria-hidden="true"></i>
               <span>Sauvegardes</span>
+            </button>
+          </li>
+        </ul>
+
+        <div class="cv-overline cv-sidebar__group">Préférences</div>
+        <ul>
+          <li>
+            <button
+              type="button"
+              class="cv-nav-item lc-nav-btn"
+              id="nav-preferences-btn"
+              data-cv-open="modal-preferences"
+            >
+              <i class="ph ph-sliders-horizontal cv-icon" aria-hidden="true"></i>
+              <span>Affichage</span>
             </button>
           </li>
         </ul>
@@ -158,6 +179,10 @@
             <i class="ph ph-notebook cv-icon" aria-hidden="true"></i>
             Aller aux notes
           </li>
+          <li class="cv-option" role="option" data-value="view:whiteboards">
+            <i class="ph ph-chalkboard-simple cv-icon" aria-hidden="true"></i>
+            Aller aux tableaux blancs
+          </li>
           <li class="cv-option" role="option" data-value="action:new-task">
             <i class="ph ph-plus cv-icon" aria-hidden="true"></i>
             Créer une tâche
@@ -170,9 +195,21 @@
             <i class="ph ph-note-pencil cv-icon" aria-hidden="true"></i>
             Créer une note
           </li>
+          <li class="cv-option" role="option" data-value="action:new-whiteboard">
+            <i class="ph ph-chalkboard-simple cv-icon" aria-hidden="true"></i>
+            Créer un tableau blanc
+          </li>
+          <li class="cv-option" role="option" data-value="action:open-statuses">
+            <i class="ph ph-columns cv-icon" aria-hidden="true"></i>
+            Configurer les statuts du Kanban
+          </li>
           <li class="cv-option" role="option" data-value="action:open-backup">
             <i class="ph ph-archive cv-icon" aria-hidden="true"></i>
             Ouvrir les sauvegardes
+          </li>
+          <li class="cv-option" role="option" data-value="action:open-preferences">
+            <i class="ph ph-sliders-horizontal cv-icon" aria-hidden="true"></i>
+            Ouvrir les préférences d’affichage
           </li>
           <li class="cv-option" role="option" data-value="action:toggle-theme">
             <i class="ph ph-moon cv-icon" aria-hidden="true"></i>
@@ -183,8 +220,13 @@
       </div>
     </dialog>
 
-    <!-- Task Detail Drawer -->
-    <dialog class="cv-drawer" id="drawer-task" aria-labelledby="drawer-task-title">
+    <!-- Task Create/Edit Dialog -->
+    <dialog
+      class="cv-drawer lc-entry-dialog"
+      id="drawer-task"
+      closedby="any"
+      aria-labelledby="drawer-task-title"
+    >
       <header class="cv-drawer__header">
         <h2 class="cv-drawer__title" id="drawer-task-title">Détails de la tâche</h2>
         <button
@@ -200,8 +242,13 @@
       <footer class="cv-drawer__footer" id="drawer-task-footer"></footer>
     </dialog>
 
-    <!-- Project Create/Edit Modal -->
-    <dialog class="cv-modal" id="modal-project" aria-labelledby="modal-project-title">
+    <!-- Project Create/Edit Dialog -->
+    <dialog
+      class="cv-modal lc-entry-dialog"
+      id="modal-project"
+      closedby="any"
+      aria-labelledby="modal-project-title"
+    >
       <header class="cv-modal__header">
         <h2 class="cv-modal__title" id="modal-project-title">Nouveau projet</h2>
         <button
@@ -215,6 +262,50 @@
       </header>
       <div class="cv-modal__body" id="modal-project-body"></div>
       <footer class="cv-modal__footer" id="modal-project-footer"></footer>
+    </dialog>
+
+    <!-- Note Create/Edit Dialog -->
+    <dialog
+      class="cv-drawer lc-entry-dialog"
+      id="dialog-note"
+      closedby="any"
+      aria-labelledby="dialog-note-title"
+    >
+      <header class="cv-drawer__header">
+        <h2 class="cv-drawer__title" id="dialog-note-title">Nouvelle note</h2>
+        <button
+          type="button"
+          class="cv-btn cv-btn--ghost cv-btn--icon"
+          aria-label="Fermer"
+          data-cv-close
+        >
+          <i class="ph ph-x cv-icon" aria-hidden="true"></i>
+        </button>
+      </header>
+      <div class="cv-drawer__body" id="dialog-note-body"></div>
+      <footer class="cv-drawer__footer" id="dialog-note-footer"></footer>
+    </dialog>
+
+    <!-- Whiteboard Create/Edit Dialog -->
+    <dialog
+      class="cv-modal lc-entry-dialog"
+      id="dialog-whiteboard"
+      closedby="any"
+      aria-labelledby="dialog-whiteboard-title"
+    >
+      <header class="cv-modal__header">
+        <h2 class="cv-modal__title" id="dialog-whiteboard-title">Nouveau tableau blanc</h2>
+        <button
+          type="button"
+          class="cv-btn cv-btn--ghost cv-btn--icon"
+          aria-label="Fermer"
+          data-cv-close
+        >
+          <i class="ph ph-x cv-icon" aria-hidden="true"></i>
+        </button>
+      </header>
+      <div class="cv-modal__body" id="dialog-whiteboard-body"></div>
+      <footer class="cv-modal__footer" id="dialog-whiteboard-footer"></footer>
     </dialog>
 
     <!-- Destructive Confirmation Modal -->
@@ -248,6 +339,195 @@
         </button>
       </header>
       <div class="cv-modal__body" id="modal-backup-body"></div>
+      <footer class="cv-modal__footer">
+        <button type="button" class="cv-btn" data-cv-close>Fermer</button>
+      </footer>
+    </dialog>
+
+    <!-- Kanban Statuses Configuration Modal -->
+    <dialog
+      class="cv-modal"
+      id="modal-statuses"
+      closedby="any"
+      aria-labelledby="modal-statuses-title"
+    >
+      <header class="cv-modal__header">
+        <h2 class="cv-modal__title" id="modal-statuses-title">Statuts du Kanban</h2>
+        <button
+          type="button"
+          class="cv-btn cv-btn--ghost cv-btn--icon"
+          aria-label="Fermer"
+          data-cv-close
+        >
+          <i class="ph ph-x cv-icon" aria-hidden="true"></i>
+        </button>
+      </header>
+      <div class="cv-modal__body" id="modal-statuses-body"></div>
+      <footer class="cv-modal__footer" id="modal-statuses-footer"></footer>
+    </dialog>
+
+    <!-- Display Preferences Modal -->
+    <dialog
+      class="cv-modal"
+      id="modal-preferences"
+      closedby="any"
+      aria-labelledby="modal-preferences-title"
+    >
+      <header class="cv-modal__header">
+        <h2 class="cv-modal__title" id="modal-preferences-title">Préférences d’affichage</h2>
+        <button
+          type="button"
+          class="cv-btn cv-btn--ghost cv-btn--icon"
+          aria-label="Fermer"
+          data-cv-close
+        >
+          <i class="ph ph-x cv-icon" aria-hidden="true"></i>
+        </button>
+      </header>
+      <div class="cv-modal__body">
+        <div class="cv-field">
+          <span class="cv-label" aria-hidden="true">Taille du texte</span>
+          <fieldset
+            class="cv-segmented"
+            data-cv-text-size-control
+            aria-describedby="pref-text-size-hint"
+          >
+            <legend>Taille du texte</legend>
+            <label
+              ><input type="radio" name="text-size" value="auto" checked /><span
+                >Automatique</span
+              ></label
+            >
+            <label
+              ><input type="radio" name="text-size" value="standard" /><span>Standard</span></label
+            >
+            <label
+              ><input type="radio" name="text-size" value="comfortable" /><span
+                >Confortable</span
+              ></label
+            >
+            <label><input type="radio" name="text-size" value="large" /><span>Grande</span></label>
+          </fieldset>
+          <span class="cv-hint" id="pref-text-size-hint">
+            Automatique adapte l’échelle aux grands écrans (×1,125 dès 2000 px, ×1,25 dès 2400 px).
+          </span>
+        </div>
+
+        <div class="cv-field">
+          <span class="cv-label" id="pref-input-presentation-label" aria-hidden="true">
+            Visuel de saisie par écran
+          </span>
+          <div
+            class="lc-pref-input-list"
+            role="group"
+            aria-labelledby="pref-input-presentation-label"
+            aria-describedby="pref-input-presentation-hint"
+          >
+            <div class="lc-pref-input-row">
+              <span class="lc-pref-input-row__label" aria-hidden="true">Tâches</span>
+              <fieldset class="cv-segmented" data-input-screen="tasks">
+                <legend>Visuel de saisie pour Tâches</legend>
+                <label>
+                  <input type="radio" name="input-presentation-tasks" value="drawer" checked />
+                  <span>Tiroir latéral</span>
+                </label>
+                <label>
+                  <input type="radio" name="input-presentation-tasks" value="modal" />
+                  <span>Modale</span>
+                </label>
+              </fieldset>
+            </div>
+
+            <div class="lc-pref-input-row">
+              <span class="lc-pref-input-row__label" aria-hidden="true">Projets</span>
+              <fieldset class="cv-segmented" data-input-screen="projects">
+                <legend>Visuel de saisie pour Projets</legend>
+                <label>
+                  <input type="radio" name="input-presentation-projects" value="drawer" />
+                  <span>Tiroir latéral</span>
+                </label>
+                <label>
+                  <input type="radio" name="input-presentation-projects" value="modal" checked />
+                  <span>Modale</span>
+                </label>
+              </fieldset>
+            </div>
+
+            <div class="lc-pref-input-row">
+              <span class="lc-pref-input-row__label" aria-hidden="true">Notes</span>
+              <fieldset class="cv-segmented" data-input-screen="notes">
+                <legend>Visuel de saisie pour Notes</legend>
+                <label>
+                  <input type="radio" name="input-presentation-notes" value="drawer" checked />
+                  <span>Tiroir latéral</span>
+                </label>
+                <label>
+                  <input type="radio" name="input-presentation-notes" value="modal" />
+                  <span>Modale</span>
+                </label>
+              </fieldset>
+            </div>
+
+            <div class="lc-pref-input-row">
+              <span class="lc-pref-input-row__label" aria-hidden="true">Tableaux blancs</span>
+              <fieldset class="cv-segmented" data-input-screen="whiteboards">
+                <legend>Visuel de saisie pour Tableaux blancs</legend>
+                <label>
+                  <input type="radio" name="input-presentation-whiteboards" value="drawer" />
+                  <span>Tiroir latéral</span>
+                </label>
+                <label>
+                  <input type="radio" name="input-presentation-whiteboards" value="modal" checked />
+                  <span>Modale</span>
+                </label>
+              </fieldset>
+            </div>
+          </div>
+          <span class="cv-hint" id="pref-input-presentation-hint">
+            Choisissez d’ouvrir la saisie dans un tiroir latéral ou dans une modale pour chaque
+            écran.
+          </span>
+        </div>
+
+        <div class="cv-field">
+          <label class="cv-label" for="pref-toast-duration">
+            Durée des notifications (secondes)
+          </label>
+          <input
+            class="cv-input cv-input--mono lc-pref-duration-input"
+            id="pref-toast-duration"
+            name="toast-duration-seconds"
+            type="number"
+            min="1"
+            max="60"
+            step="1"
+            inputmode="numeric"
+            value="6"
+            required
+            aria-describedby="pref-toast-duration-hint"
+          />
+          <span class="cv-error" id="pref-toast-duration-error" aria-live="polite" hidden></span>
+          <span class="cv-hint" id="pref-toast-duration-hint">
+            Délai en secondes (1 à 60 s, 6 s par défaut) avant fermeture automatique des
+            notifications de succès et d’information. Les avertissements et erreurs restent affichés
+            jusqu’à fermeture manuelle.
+          </span>
+        </div>
+
+        <div class="cv-field">
+          <span class="cv-label">Colonnes du Kanban</span>
+          <div>
+            <button type="button" class="cv-btn" id="btn-pref-open-statuses">
+              <i class="ph ph-columns cv-icon" aria-hidden="true"></i>
+              Configurer les statuts du Kanban
+            </button>
+          </div>
+          <span class="cv-hint">
+            Ajoutez, renommez, réordonnez ou supprimez les colonnes de statut affichées dans le
+            Kanban.
+          </span>
+        </div>
+      </div>
       <footer class="cv-modal__footer">
         <button type="button" class="cv-btn" data-cv-close>Fermer</button>
       </footer>

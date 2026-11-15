@@ -3,7 +3,7 @@
    Native HTML first: <dialog> for modals, drawers and the command menu, the
    popover attribute for menus, native inputs for dates. This script only adds
    what the platform does not provide. Load once; it initialises itself and
-   exposes window.Covenant = { init, toast, openDialog, closeDialog }. */
+   exposes window.Covenant = { init, toast, setTextSize, getTextSize, openDialog, closeDialog }. */
 (function () {
   'use strict';
   if (window.Covenant && window.Covenant.__loaded) return;
@@ -208,12 +208,39 @@
   }
   function wireToast(el, timeout) {
     var btn = el.querySelector('[data-cv-dismiss]');
-    function remove() { if (el.parentNode) el.parentNode.removeChild(el); }
+    var timer = null;
+    var remaining = timeout;
+    var startedAt = 0;
+    var hovered = false;
+    var focused = false;
+    function remove() {
+      if (timer) { clearTimeout(timer); timer = null; }
+      if (el.parentNode) el.parentNode.removeChild(el);
+    }
+    function pause() {
+      if (!timer) return;
+      clearTimeout(timer);
+      timer = null;
+      remaining = Math.max(0, remaining - (Date.now() - startedAt));
+    }
+    function resume() {
+      if (timer || hovered || focused || !el.parentNode) return;
+      startedAt = Date.now();
+      timer = setTimeout(remove, remaining);
+    }
     if (btn) btn.addEventListener('click', remove);
     if (timeout > 0) {
-      var t = setTimeout(remove, timeout);
-      el.addEventListener('mouseenter', function () { clearTimeout(t); });
-      el.addEventListener('focusin', function () { clearTimeout(t); });
+      startedAt = Date.now();
+      timer = setTimeout(remove, timeout);
+      el.addEventListener('mouseenter', function () { hovered = true; pause(); });
+      el.addEventListener('mouseleave', function () { hovered = false; resume(); });
+      el.addEventListener('focusin', function () { focused = true; pause(); });
+      el.addEventListener('focusout', function (e) {
+        if (!e.relatedTarget || !el.contains(e.relatedTarget)) {
+          focused = false;
+          resume();
+        }
+      });
     }
     return el;
   }
@@ -255,6 +282,24 @@
     }
   }
 
+  /* ---------- Text size (user preference) ---------- */
+  var TEXT_SIZES = ['auto', 'standard', 'comfortable', 'large'];
+  function getTextSize() { return document.documentElement.getAttribute('data-text-size') || 'auto'; }
+  function setTextSize(size) {
+    if (TEXT_SIZES.indexOf(size) < 0) size = 'auto';
+    if (size === 'auto') document.documentElement.removeAttribute('data-text-size');
+    else document.documentElement.setAttribute('data-text-size', size);
+    each(document, '[data-cv-text-size-control] input[type="radio"]', function (r) { r.checked = r.value === size; });
+    document.dispatchEvent(new CustomEvent('cv:textsize', { detail: { size: size } }));
+    return size;
+  }
+  function initTextSizeControl(group) {
+    if (!once(group, 'cvTextSize')) return;
+    var current = getTextSize();
+    each(group, 'input[type="radio"]', function (r) { r.checked = r.value === current; });
+    group.addEventListener('change', function (e) { if (e.target.matches('input[type="radio"]')) setTextSize(e.target.value); });
+  }
+
   /* ---------- Delegated events ---------- */
   document.addEventListener('click', function (e) {
     var opener = e.target.closest('[data-cv-open]');
@@ -285,6 +330,7 @@
     each(root, '.cv-tooltip-wrap', initTooltip);
     each(root, '.cv-tabs', initTabs);
     each(root, '.cv-combobox', initCombobox);
+    each(root, '[data-cv-text-size-control]', initTextSizeControl);
     each(root, '.cv-toast[data-cv-timeout]', function (el) {
       if (once(el, 'cvWired')) wireToast(el, parseInt(el.getAttribute('data-cv-timeout'), 10) || 0);
     });
@@ -294,6 +340,8 @@
     __loaded: true,
     init: init,
     toast: toast,
+    setTextSize: setTextSize,
+    getTextSize: getTextSize,
     openDialog: function (id) { var d = typeof id === 'string' ? document.getElementById(id) : id; if (d) { initDialog(d); openDialog(d); } },
     closeDialog: function (id) { var d = typeof id === 'string' ? document.getElementById(id) : id; closeDialog(d); }
   };

@@ -1,12 +1,12 @@
 ---
-version: '0.1.0'
+version: '0.2.0'
 cree_le: 2026-11-13
-mis_a_jour_le: 2026-11-13
+mis_a_jour_le: 2026-11-14
 ---
 
 # Créer votre premier espace de travail
 
-Dans ce tutoriel, nous allons créer votre premier projet dans Locavern, y ajouter une tâche avec une liste de contrôle, la faire avancer sur le tableau Kanban, rédiger une note associée et exporter une sauvegarde ZIP. Toutes les données restent enregistrées localement dans votre navigateur.
+Dans ce tutoriel, nous allons créer votre premier projet dans Locavern, y ajouter une tâche avec une liste de contrôle, la faire avancer sur le tableau Kanban, rédiger une note associée, esquisser un tableau blanc et exporter une sauvegarde ZIP. Toutes les données restent enregistrées localement dans votre navigateur.
 
 ## Sommaire
 
@@ -14,7 +14,8 @@ Dans ce tutoriel, nous allons créer votre premier projet dans Locavern, y ajout
 - [2. Ajouter une tâche détaillée](#2-ajouter-une-tâche-détaillée)
 - [3. Faire avancer la tâche en vue Kanban](#3-faire-avancer-la-tâche-en-vue-kanban)
 - [4. Rédiger une note associée](#4-rédiger-une-note-associée)
-- [5. Exporter votre première sauvegarde ZIP](#5-exporter-votre-première-sauvegarde-zip)
+- [5. Esquisser un tableau blanc associé](#5-esquisser-un-tableau-blanc-associé)
+- [6. Exporter votre première sauvegarde ZIP](#6-exporter-votre-première-sauvegarde-zip)
 - [Pour aller plus loin](#pour-aller-plus-loin)
 
 ## 1. Créer un premier projet
@@ -52,17 +53,28 @@ La carte passe dans la colonne **En cours**, dont le compteur passe à `1`, tand
 ## 4. Rédiger une note associée
 
 1. Dans la barre de navigation latérale à gauche, cliquez sur **Notes**. L’écran affiche « Aucune note disponible ».
-2. Cliquez sur **Créer une note**.
-3. L’éditeur s’ouvre avec une note sélectionnée intitulée `Nouvelle note`, automatiquement rattachée au projet `Rénovation bureau`.
-4. Dans **Titre de la note**, remplacez le texte par `Dimensions du bureau`.
-5. Cliquez dans la zone d’écriture sous la barre d’outils et saisissez `Largeur disponible : 180 cm.`
+2. Cliquez sur **Créer une note**. Le tiroir latéral **Nouvelle note** s’ouvre avec `Rénovation bureau` présélectionné dans **Projet associé**.
+3. Dans **Titre de la note**, saisissez `Dimensions du bureau`.
+4. Dans la zone **Contenu**, cliquez dans le champ texte sous la barre d’outils et saisissez `Largeur disponible : 180 cm.`
+5. Cliquez sur **Créer la note**.
 
-Sous la zone d’écriture, le statut passe brièvement à `Modifications en cours` puis affiche `Enregistrée localement`. Le titre dans la liste à gauche se met à jour pour afficher `Dimensions du bureau`.
+Une notification « Note créée » apparaît et le tiroir se ferme. La note `Dimensions du bureau` est sélectionnée dans la liste à gauche et ouverte dans l’éditeur intégré, avec le statut `Enregistrée localement`.
 
-## 5. Exporter votre première sauvegarde ZIP
+## 5. Esquisser un tableau blanc associé
+
+1. Dans la barre de navigation latérale, cliquez sur **Tableaux blancs**. L’écran affiche « Aucun tableau blanc disponible ».
+2. Cliquez sur **Créer un tableau blanc**. La fenêtre **Nouveau tableau blanc** s’ouvre avec `Rénovation bureau` présélectionné dans **Projet associé**.
+3. Dans **Titre du tableau blanc**, saisissez `Plan d’implantation`.
+4. Cliquez sur **Créer le tableau blanc**. Le canevas du tableau `Plan d’implantation` s’affiche.
+5. Dans la barre d’outils du canevas, sélectionnez **Post-it**, puis cliquez sur **Ajouter au centre**.
+6. Appuyez sur `Entrée` ou `F2` sur le Post-it sélectionné, remplacez le texte par `Bureau 160 cm près de la fenêtre`, puis cliquez sur **Valider**.
+
+Le statut en bas à gauche affiche `Enregistré localement`.
+
+## 6. Exporter votre première sauvegarde ZIP
 
 1. Dans la barre supérieure, cliquez sur **Sauvegarder**. La fenêtre **Sauvegardes et stockage** s’ouvre.
-2. Sous **État du stockage local**, vérifiez les compteurs : `1` projet, `1` tâche et `1` note.
+2. Sous **État du stockage local**, vérifiez les compteurs : `1` projet, `1` tâche, `1` note et `1` tableau blanc.
 3. Sous **Exporter une archive**, cliquez sur **Exporter l’archive ZIP**.
 
 Une notification « Archive exportée » confirme l’opération et votre navigateur télécharge un fichier nommé `locavern-sauvegarde-AAAA-MM-JJ.zip`.
@@ -71,4 +83,5 @@ Une notification « Archive exportée » confirme l’opération et votre naviga
 
 - Pour gérer le tri, le glisser-déposer et l’archivage des projets : [Comment organiser vos projets et vos tâches](../how-to/organiser-projets-et-taches.md).
 - Pour mettre en forme vos notes et y insérer des images locales : [Comment rédiger des notes avec mise en forme et images locales](../how-to/rediger-notes-et-images.md).
+- Pour maîtriser les outils et l’export SVG/PNG du tableau blanc : [Comment utiliser le tableau blanc](../how-to/utiliser-le-tableau-blanc.md).
 - Pour comprendre où sont conservées vos données : [Fonctionnement local, confidentialité et périmètre](../explanation/fonctionnement-local-et-confidentialite.md).

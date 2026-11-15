@@ -1,4 +1,4 @@
-const CACHE_NAME = 'locavern-shell-v1';
+const CACHE_NAME = 'locavern-shell-v2';
 
 const CORE_ASSETS = [
   './',

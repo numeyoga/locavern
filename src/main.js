@@ -8,9 +8,8 @@ import '@phosphor-icons/web/regular';
 import '@phosphor-icons/web/bold';
 import './styles/app.css';
 
-/** @import { ActiveView, AssetMeta, Task, TaskPriority, TaskStatus } from './types.d.ts' */
+/** @import { ActiveView, AssetMeta, Note, Task, TaskPriority, TaskStatus, TaskStatusFilter, Whiteboard } from './types.d.ts' */
 
-import { EMPTY_RICH_DOC } from './core/model.js';
 import { createStore } from './core/store.js';
 import { validateImageFile } from './adapters/archive-file.js';
 import {
@@ -29,18 +28,24 @@ import {
   notify,
   openDialogById,
   renderReadOnlyBanner,
+  setToastDurationSeconds,
   syncNavigationChrome,
   toggleColorScheme,
   wireAppShell,
 } from './adapters/dom/app-shell.js';
 import { wireBackupModal } from './adapters/dom/backup-modal.js';
 import { renderKanbanView } from './adapters/dom/kanban-view.js';
+import { openNoteDialog } from './adapters/dom/note-dialog.js';
 import { renderNotesView } from './adapters/dom/notes-view.js';
+import { wirePreferencesModal } from './adapters/dom/preferences-modal.js';
 import { openProjectModal, renderProjectsView } from './adapters/dom/project-view.js';
+import { wireStatusModal } from './adapters/dom/status-modal.js';
 import { openTaskDrawer } from './adapters/dom/task-drawer.js';
 import { renderTaskListView } from './adapters/dom/task-list-view.js';
+import { openWhiteboardDialog } from './adapters/dom/whiteboard-dialog.js';
+import { renderWhiteboardView } from './adapters/dom/whiteboard-view.js';
 
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.2.0';
 
 async function bootstrap() {
   const viewContainer = document.getElementById('app-view');
@@ -60,6 +65,7 @@ async function bootstrap() {
       readOnly: !lockHandle.acquired,
     },
   });
+  setToastDurationSeconds(store.getState().preferences.toastDurationSeconds);
 
   /** @type {Map<string, string>} */
   const assetUrlCache = new Map();
@@ -125,7 +131,7 @@ async function bootstrap() {
     return { assetId, alt: meta.filename };
   }
 
-  /** @type {{ query: string; status: TaskStatus | 'all'; priority: TaskPriority | 'all'; sortBy: 'position' | 'dueDate' | 'priority' }} */
+  /** @type {{ query: string; status: TaskStatusFilter; priority: TaskPriority | 'all'; sortBy: 'position' | 'dueDate' | 'priority' }} */
   const taskListFilters = {
     query: '',
     status: 'all',
@@ -138,21 +144,75 @@ async function bootstrap() {
     projectId: 'all',
     query: '',
   };
+  /** @type {{ projectId: string | null | 'all'; query: string }} */
+  const whiteboardsFilters = {
+    projectId: 'all',
+    query: '',
+  };
 
-  /** @type {{ flushAndDestroy: () => void } | null} */
+  /** @type {{ flushAndDestroy: () => void; isDispatchingInline: () => boolean } | null} */
   let notesViewHandle = null;
+  /** @type {{ flushAndDestroy: () => void; isDispatchingInline: () => boolean } | null} */
+  let whiteboardViewHandle = null;
+
+  function flushActiveViewHandles() {
+    if (notesViewHandle) {
+      notesViewHandle.flushAndDestroy();
+      notesViewHandle = null;
+    }
+    if (whiteboardViewHandle) {
+      whiteboardViewHandle.flushAndDestroy();
+      whiteboardViewHandle = null;
+    }
+  }
 
   /**
    * @param {Task} [task]
-   * @param {TaskStatus} [defaultStatus]
+   * @param {TaskStatus | null} [defaultStatus]
    */
-  function handleOpenTaskDrawer(task, defaultStatus = 'todo') {
+  function handleOpenTaskDrawer(task, defaultStatus) {
     openTaskDrawer({
       store,
       task,
       defaultStatus,
       resolveAssetUrl,
       uploadLocalImage,
+    });
+  }
+
+  /**
+   * @param {{ note?: Note; defaultProjectId?: string | null }} [opts]
+   */
+  function handleOpenNoteDialog(opts = {}) {
+    openNoteDialog({
+      store,
+      note: opts.note,
+      defaultProjectId: opts.defaultProjectId,
+      resolveAssetUrl,
+      uploadLocalImage,
+      onAfterCreate() {
+        if (store.getState().preferences.activeView !== 'notes') {
+          flushActiveViewHandles();
+          store.dispatch({ type: 'set_view', view: 'notes' });
+        }
+      },
+    });
+  }
+
+  /**
+   * @param {{ whiteboard?: Whiteboard; defaultProjectId?: string | null }} [opts]
+   */
+  function handleOpenWhiteboardDialog(opts = {}) {
+    openWhiteboardDialog({
+      store,
+      whiteboard: opts.whiteboard,
+      defaultProjectId: opts.defaultProjectId,
+      onAfterCreate() {
+        if (store.getState().preferences.activeView !== 'whiteboards') {
+          flushActiveViewHandles();
+          store.dispatch({ type: 'set_view', view: 'whiteboards' });
+        }
+      },
     });
   }
 
@@ -168,9 +228,22 @@ async function bootstrap() {
       notesViewHandle.flushAndDestroy();
       notesViewHandle = null;
     }
+    if (activeView !== 'whiteboards' && whiteboardViewHandle) {
+      whiteboardViewHandle.flushAndDestroy();
+      whiteboardViewHandle = null;
+    }
 
     if (activeView === 'projects') {
-      renderProjectsView({ container: rootView, store });
+      renderProjectsView({
+        container: rootView,
+        store,
+        onOpenProjectNotes(projectId) {
+          notesFilters.projectId = projectId;
+          notesFilters.query = '';
+          store.dispatch({ type: 'select_project', projectId });
+          store.dispatch({ type: 'set_view', view: 'notes' });
+        },
+      });
       return;
     }
 
@@ -182,6 +255,20 @@ async function bootstrap() {
         filters: notesFilters,
         resolveAssetUrl,
         uploadLocalImage,
+        onOpenNoteDialog: handleOpenNoteDialog,
+      });
+      return;
+    }
+
+    if (activeView === 'whiteboards') {
+      whiteboardViewHandle?.flushAndDestroy();
+      whiteboardViewHandle = renderWhiteboardView({
+        container: rootView,
+        store,
+        filters: whiteboardsFilters,
+        resolveAssetUrl,
+        uploadLocalImage,
+        onOpenWhiteboardDialog: handleOpenWhiteboardDialog,
       });
       return;
     }
@@ -267,6 +354,8 @@ async function bootstrap() {
   let pendingWrites = 0;
 
   store.subscribe(({ state, prevState, command, effects }) => {
+    setToastDurationSeconds(state.preferences.toastDurationSeconds);
+
     if (effects.length > 0) {
       pendingWrites += 1;
       document.documentElement.dataset.persisting = 'true';
@@ -288,17 +377,47 @@ async function bootstrap() {
         });
     }
 
+    if (command.type === 'delete_project') {
+      if (notesFilters.projectId === command.id) {
+        notesFilters.projectId = 'all';
+      }
+      if (whiteboardsFilters.projectId === command.id) {
+        whiteboardsFilters.projectId = 'all';
+      }
+    }
+
+    if (command.type === 'replace_all') {
+      notesFilters.projectId = 'all';
+      notesFilters.query = '';
+      whiteboardsFilters.projectId = 'all';
+      whiteboardsFilters.query = '';
+    }
+
     if (
       command.type === 'update_note' &&
       state.preferences.activeView === 'notes' &&
       prevState.preferences.activeView === 'notes' &&
-      notesViewHandle
+      notesViewHandle?.isDispatchingInline()
     ) {
-      // Notes view already preserves cursor/focus and updates sidebar title in place.
+      // Notes inline autosave already preserves cursor/focus and updates sidebar title in place.
       return;
     }
 
-    if (command.type === 'register_asset') {
+    if (
+      command.type === 'update_whiteboard' &&
+      state.preferences.activeView === 'whiteboards' &&
+      prevState.preferences.activeView === 'whiteboards' &&
+      whiteboardViewHandle?.isDispatchingInline()
+    ) {
+      // Whiteboard inline autosave already preserves SVG focus and updates sidebar title in place.
+      return;
+    }
+
+    if (
+      command.type === 'register_asset' ||
+      command.type === 'set_input_presentation' ||
+      command.type === 'set_toast_duration'
+    ) {
       return;
     }
 
@@ -307,32 +426,34 @@ async function bootstrap() {
 
   wireAppShell({
     onSelectView(/** @type {ActiveView} */ view) {
-      notesViewHandle?.flushAndDestroy();
-      notesViewHandle = null;
+      flushActiveViewHandles();
       store.dispatch({ type: 'set_view', view });
     },
     onCommand(commandId) {
       const state = store.getState();
       switch (commandId) {
         case 'view:tasks':
-          notesViewHandle?.flushAndDestroy();
-          notesViewHandle = null;
+          flushActiveViewHandles();
           store.dispatch({ type: 'set_view', view: 'tasks' });
           break;
         case 'view:projects':
-          notesViewHandle?.flushAndDestroy();
-          notesViewHandle = null;
+          flushActiveViewHandles();
           store.dispatch({ type: 'set_view', view: 'projects' });
           break;
         case 'view:notes':
+          flushActiveViewHandles();
           store.dispatch({ type: 'set_view', view: 'notes' });
+          break;
+        case 'view:whiteboards':
+          flushActiveViewHandles();
+          store.dispatch({ type: 'set_view', view: 'whiteboards' });
           break;
         case 'action:new-task':
           if (state.readOnly) return;
           if (state.projects.length === 0) {
             openProjectModal({ store });
           } else {
-            handleOpenTaskDrawer(undefined, 'todo');
+            handleOpenTaskDrawer(undefined, state.preferences.taskStatuses[0]?.id ?? null);
           }
           break;
         case 'action:new-project':
@@ -341,21 +462,22 @@ async function bootstrap() {
           break;
         case 'action:new-note':
           if (state.readOnly) return;
-          notesViewHandle?.flushAndDestroy();
-          notesViewHandle = null;
-          store.dispatch({ type: 'set_view', view: 'notes' });
-          store.dispatch({
-            type: 'create_note',
-            id: crypto.randomUUID(),
-            projectId: state.preferences.selectedProjectId ?? null,
-            title: 'Nouvelle note',
-            contentDoc: EMPTY_RICH_DOC,
-            assetIds: [],
-            now: new Date().toISOString(),
+          handleOpenNoteDialog({ defaultProjectId: state.preferences.selectedProjectId ?? null });
+          break;
+        case 'action:new-whiteboard':
+          if (state.readOnly) return;
+          handleOpenWhiteboardDialog({
+            defaultProjectId: state.preferences.selectedProjectId ?? null,
           });
+          break;
+        case 'action:open-statuses':
+          openDialogById('modal-statuses');
           break;
         case 'action:open-backup':
           openDialogById('modal-backup');
+          break;
+        case 'action:open-preferences':
+          openDialogById('modal-preferences');
           break;
         case 'action:toggle-theme':
           toggleColorScheme();
@@ -369,14 +491,16 @@ async function bootstrap() {
     store,
     appVersion: APP_VERSION,
     onBeforeReplace() {
-      notesViewHandle?.flushAndDestroy();
-      notesViewHandle = null;
+      flushActiveViewHandles();
       revokeAllAssetUrls();
     },
   });
 
+  wirePreferencesModal({ store });
+  wireStatusModal({ store });
+
   window.addEventListener('beforeunload', () => {
-    notesViewHandle?.flushAndDestroy();
+    flushActiveViewHandles();
     cancelLockWait();
     stopLockListener();
     lockHandle.release();

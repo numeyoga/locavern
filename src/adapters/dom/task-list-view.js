@@ -1,15 +1,9 @@
-/** @import { AppCommand, AppState, StoreEffect, Task, TaskPriority, TaskStatus } from '../../types.d.ts' */
+/** @import { AppCommand, AppState, StoreEffect, Task, TaskPriority, TaskStatus, TaskStatusFilter } from '../../types.d.ts' */
 
+import { getTaskStatusMeta } from '../../core/model.js';
 import { selectProjectById, selectTasks } from '../../core/store.js';
 import { confirmAction, notify } from './app-shell.js';
 import { createTaskWorkspaceHeader } from './task-workspace-header.js';
-
-/** @type {Record<TaskStatus, { label: string; badgeClass: string }>} */
-const STATUS_META = {
-  todo: { label: 'À faire', badgeClass: 'cv-badge' },
-  in_progress: { label: 'En cours', badgeClass: 'cv-badge cv-badge--info' },
-  done: { label: 'Terminé', badgeClass: 'cv-badge cv-badge--success' },
-};
 
 /** @type {Record<TaskPriority, { label: string; badgeClass: string }>} */
 const PRIORITY_META = {
@@ -22,14 +16,25 @@ const PRIORITY_META = {
  * Create a Covenant badge element.
  * @param {string} label
  * @param {string} badgeClass
+ * @param {{ warningIcon?: boolean; statusBadgeKind?: 'known' | 'missing' | 'unknown' }} [opts]
  * @returns {HTMLSpanElement}
  */
-function makeBadge(label, badgeClass) {
+function makeBadge(label, badgeClass, opts = {}) {
   const badge = document.createElement('span');
   badge.className = badgeClass;
-  const dot = document.createElement('span');
-  dot.className = 'cv-badge__dot';
-  badge.append(dot, document.createTextNode(label));
+  if (opts.statusBadgeKind) {
+    badge.dataset.statusBadge = opts.statusBadgeKind;
+  }
+  if (opts.warningIcon) {
+    const ic = document.createElement('i');
+    ic.className = 'ph ph-warning cv-icon';
+    ic.setAttribute('aria-hidden', 'true');
+    badge.append(ic, document.createTextNode(` ${label}`));
+  } else {
+    const dot = document.createElement('span');
+    dot.className = 'cv-badge__dot';
+    badge.append(dot, document.createTextNode(label));
+  }
   return badge;
 }
 
@@ -43,7 +48,7 @@ function makeBadge(label, badgeClass) {
  *   };
  *   filters: {
  *     query: string;
- *     status: TaskStatus | 'all';
+ *     status: TaskStatusFilter;
  *     priority: TaskPriority | 'all';
  *     sortBy: 'position' | 'dueDate' | 'priority';
  *   };
@@ -133,15 +138,19 @@ export function renderTaskListView({
   /** @type {Array<[string, string]>} */
   const statusOptions = [
     ['all', 'Tous les statuts'],
-    ['todo', 'À faire'],
-    ['in_progress', 'En cours'],
-    ['done', 'Terminé'],
+    ...state.preferences.taskStatuses.map((s) => /** @type {[string, string]} */ ([s.id, s.label])),
+    ['__none__', 'Sans statut'],
+    ['__unknown__', 'Statut inconnu'],
   ];
   for (const [val, lbl] of statusOptions) {
     const opt = document.createElement('option');
     opt.value = val;
     opt.textContent = lbl;
     statusSelect.append(opt);
+  }
+  const validFilterValues = new Set(statusOptions.map(([val]) => val));
+  if (!validFilterValues.has(filters.status)) {
+    filters.status = 'all';
   }
   statusSelect.value = filters.status;
   statusWrap.append(statusSelect);
@@ -208,6 +217,7 @@ export function renderTaskListView({
 
   function renderTable() {
     const currentState = store.getState();
+    const configuredStatuses = currentState.preferences.taskStatuses;
     const tasks = selectTasks(currentState, {
       projectId: currentState.preferences.selectedProjectId,
       status: filters.status,
@@ -244,6 +254,9 @@ export function renderTaskListView({
 
     const wrap = document.createElement('div');
     wrap.className = 'cv-table-wrap';
+    wrap.setAttribute('role', 'region');
+    wrap.setAttribute('aria-labelledby', 'task-table-caption');
+    wrap.tabIndex = 0;
     const table = document.createElement('table');
     table.className = 'cv-table';
 
@@ -252,6 +265,7 @@ export function renderTaskListView({
       currentState.preferences.selectedProjectId,
     );
     const caption = document.createElement('caption');
+    caption.id = 'task-table-caption';
     caption.textContent = selectedProject
       ? `Tâches — ${selectedProject.name} (${tasks.length})`
       : `Toutes les tâches (${tasks.length})`;
@@ -280,6 +294,11 @@ export function renderTaskListView({
     const tbody = document.createElement('tbody');
     for (const task of tasks) {
       const tr = document.createElement('tr');
+      const statusMeta = getTaskStatusMeta(task.status, configuredStatuses);
+      if (!statusMeta.known) {
+        tr.classList.add('lc-task-row--unmapped');
+        tr.dataset.statusUnknown = 'true';
+      }
 
       const tdTitle = document.createElement('td');
       const titleBtn = document.createElement('button');
@@ -293,8 +312,12 @@ export function renderTaskListView({
       tdProject.textContent = selectProjectById(currentState, task.projectId)?.name ?? 'Projet';
 
       const tdStatus = document.createElement('td');
-      const statusInfo = STATUS_META[task.status];
-      tdStatus.append(makeBadge(statusInfo.label, statusInfo.badgeClass));
+      tdStatus.append(
+        makeBadge(statusMeta.label, statusMeta.badgeClass, {
+          warningIcon: !statusMeta.known,
+          statusBadgeKind: statusMeta.kind,
+        }),
+      );
 
       const tdPriority = document.createElement('td');
       const priorityInfo = PRIORITY_META[task.priority];
@@ -314,21 +337,29 @@ export function renderTaskListView({
       quickStatus.style.minHeight = 'var(--cv-row-sm)';
       quickStatus.setAttribute('aria-label', `Changer le statut de « ${task.title} »`);
       quickStatus.disabled = currentState.readOnly;
-      /** @type {Array<[TaskStatus, string]>} */
-      const quickOptions = [
-        ['todo', 'À faire'],
-        ['in_progress', 'En cours'],
-        ['done', 'Terminé'],
-      ];
-      for (const [val, lbl] of quickOptions) {
+
+      if (statusMeta.kind === 'unknown' && task.status) {
+        const unknownOpt = document.createElement('option');
+        unknownOpt.value = task.status;
+        unknownOpt.textContent = statusMeta.label;
+        unknownOpt.disabled = true;
+        quickStatus.append(unknownOpt);
+      }
+
+      const noneOpt = document.createElement('option');
+      noneOpt.value = '';
+      noneOpt.textContent = 'Sans statut';
+      quickStatus.append(noneOpt);
+
+      for (const statusCfg of configuredStatuses) {
         const opt = document.createElement('option');
-        opt.value = val;
-        opt.textContent = lbl;
+        opt.value = statusCfg.id;
+        opt.textContent = statusCfg.label;
         quickStatus.append(opt);
       }
-      quickStatus.value = task.status;
+      quickStatus.value = task.status ?? '';
       quickStatus.addEventListener('change', () => {
-        const nextStatus = /** @type {TaskStatus} */ (quickStatus.value);
+        const nextStatus = quickStatus.value ? /** @type {TaskStatus} */ (quickStatus.value) : null;
         store.dispatch({
           type: 'update_task',
           id: task.id,
@@ -379,7 +410,7 @@ export function renderTaskListView({
     renderTable();
   });
   statusSelect.addEventListener('change', () => {
-    filters.status = /** @type {TaskStatus | 'all'} */ (statusSelect.value);
+    filters.status = /** @type {TaskStatusFilter} */ (statusSelect.value);
     renderTable();
   });
   prioritySelect.addEventListener('change', () => {

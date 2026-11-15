@@ -1,7 +1,7 @@
 ---
-version: '0.1.0'
+version: '0.2.0'
 cree_le: 2026-11-13
-mis_a_jour_le: 2026-11-13
+mis_a_jour_le: 2026-11-14
 ---
 
 # Comment rédiger des notes avec mise en forme et images locales
@@ -19,10 +19,11 @@ Ce guide explique comment créer, classer, mettre en forme et illustrer vos note
 
 Ouvrez la vue **Notes** depuis la barre de navigation latérale.
 
-- **Créer une note** : cliquez sur **Nouvelle note** (ou **Créer une note** si la liste est vide). La note est créée immédiatement et rattachée par défaut au projet actif dans le filtre (ou sans projet si « Toutes les notes » est affiché sans projet sélectionné).
-- **Associer ou détacher un projet** : dans l’en-tête de l’éditeur, changez le menu **Projet associé** pour choisir un projet ou **Sans projet**.
+- **Créer une note** : cliquez sur **Nouvelle note** (ou **Créer une note** si la liste est vide, ou lancez **Créer une note** via `Ctrl+K`), renseignez le **Titre de la note** et éventuellement le **Projet associé** et le **Contenu**, puis cliquez sur **Créer la note**. La fenêtre s’ouvre en tiroir latéral par défaut ou en modale selon le réglage choisi dans **Préférences d’affichage** (**Visuel de saisie par écran**).
+- **Modifier dans la fenêtre de saisie ou directement** : sélectionnez la note pour éditer directement dans l’espace intégré, ou cliquez sur **Ouvrir la saisie** dans l’en-tête pour la modifier dans la fenêtre de saisie configurée.
+- **Associer ou détacher un projet** : dans l’en-tête de l’éditeur (ou la fenêtre de saisie), changez le menu **Projet associé** pour choisir un projet ou **Sans projet**.
 - **Filtrer et rechercher** : utilisez le menu déroulant en haut à gauche (**Toutes les notes**, **Sans projet** ou un projet précis) et le champ **Rechercher une note** (recherche sur le titre). Les notes sont classées de la plus récemment modifiée à la plus ancienne.
-- **Supprimer une note** : cliquez sur **Supprimer** en bas à droite de l’éditeur, puis confirmez avec **Supprimer la note**.
+- **Supprimer une note** : cliquez sur **Supprimer** en bas à droite de l’éditeur (ou dans la fenêtre de saisie), puis confirmez avec **Supprimer la note**.
 
 ## Mettre en forme le texte et insérer des liens
 
@@ -54,8 +55,8 @@ Si vous tentez de coller une URL d’image distante (`https://…`) ou du HTML c
 
 ## Comprendre la sauvegarde automatique
 
-Chaque frappe dans le titre ou le corps de la note déclenche un enregistrement automatique après une courte pause (environ 200 ms) : l’indicateur en bas à gauche passe de **Modifications en cours** à **Enregistrée localement**. Le changement de projet associé enregistre immédiatement.
+Chaque frappe dans le titre ou le corps de la note depuis l’éditeur intégré déclenche un enregistrement automatique après une courte pause (environ 200 ms) : l’indicateur en bas à gauche passe de **Modifications en cours** à **Enregistrée localement**. Le changement de projet associé enregistre immédiatement.
 
 Vous pouvez également cliquer sur **Enregistrer** à tout moment pour forcer une sauvegarde immédiate avec une notification de confirmation.
 
-Attention : le champ **Titre de la note** ne peut pas rester vide ; si vous l’effacez entièrement, le titre précédent est conservé lors de l’enregistrement.
+Attention : le champ **Titre de la note** ne peut pas rester vide ; si vous l’effacez entièrement dans l’éditeur intégré, le titre précédent est conservé lors de l’enregistrement.

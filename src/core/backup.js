@@ -21,7 +21,9 @@ export function buildBackupPayload(state, { now, appVersion }) {
     projects: [...state.projects],
     tasks: [...state.tasks],
     notes: [...state.notes],
+    whiteboards: [...state.whiteboards],
     assets: [...state.assets],
+    taskStatuses: [...state.preferences.taskStatuses],
   };
 
   /** @type {BackupManifest} */
@@ -34,6 +36,7 @@ export function buildBackupPayload(state, { now, appVersion }) {
       projects: data.projects.length,
       tasks: data.tasks.length,
       notes: data.notes.length,
+      whiteboards: data.whiteboards.length,
       assets: data.assets.length,
     },
   };

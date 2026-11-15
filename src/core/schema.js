@@ -1,15 +1,18 @@
-/** @import { AllowedImageMimeType, AssetMeta, BackupData, ChecklistItem, Note, Project, Task, TaskPriority, TaskStatus } from '../types.d.ts' */
+/** @import { AllowedImageMimeType, AssetMeta, BackupData, ChecklistItem, Note, Project, Task, TaskPriority, TaskStatus, Whiteboard } from '../types.d.ts' */
 
 import {
   ALLOWED_IMAGE_MIMES,
   TASK_PRIORITIES,
-  TASK_STATUSES,
   collectDocAssetIds,
+  collectWhiteboardAssetIds,
   normalizeDueDate,
+  normalizeTaskStatuses,
   sanitizeRichTextDoc,
+  sanitizeWhiteboardElements,
+  sanitizeWhiteboardViewport,
 } from './model.js';
 
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 export const MAX_IMPORT_RECORDS = 10_000;
 export const MAX_ASSET_BYTES = 5 * 1024 * 1024;
 export const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
@@ -85,8 +88,13 @@ function parseTask(raw) {
   const updatedAt = asNonEmptyString(raw.updatedAt);
   if (!id || !projectId || !title || !createdAt || !updatedAt) return null;
 
-  const status = /** @type {TaskStatus} */ (raw.status);
-  if (!TASK_STATUSES.includes(status)) return null;
+  /** @type {TaskStatus | null} */
+  let status = null;
+  if (raw.status !== null && raw.status !== undefined) {
+    if (typeof raw.status !== 'string') return null;
+    const cleanStatus = raw.status.trim().slice(0, 64);
+    status = cleanStatus || null;
+  }
 
   const priority = /** @type {TaskPriority} */ (raw.priority);
   if (!TASK_PRIORITIES.includes(priority)) return null;
@@ -159,6 +167,42 @@ function parseNote(raw) {
 }
 
 /**
+ * Parse and sanitize a raw Whiteboard record.
+ * @param {unknown} raw
+ * @returns {Whiteboard | null}
+ */
+export function parseWhiteboard(raw) {
+  if (!isRecord(raw)) return null;
+  const id = asNonEmptyString(raw.id);
+  const title = asNonEmptyString(raw.title);
+  const createdAt = asNonEmptyString(raw.createdAt);
+  const updatedAt = asNonEmptyString(raw.updatedAt);
+  if (!id || !title || !createdAt || !updatedAt) return null;
+
+  let projectId = null;
+  if (raw.projectId !== null && raw.projectId !== undefined) {
+    projectId = asNonEmptyString(raw.projectId);
+    if (!projectId) return null;
+  }
+
+  const viewport = sanitizeWhiteboardViewport(raw.viewport);
+  const elements = sanitizeWhiteboardElements(raw.elements);
+  const rawAssetIds = Array.isArray(raw.assetIds) ? rawAssetIdsFrom(raw.assetIds) : [];
+  const assetIds = [...new Set([...rawAssetIds, ...collectWhiteboardAssetIds(elements)])];
+
+  return Object.freeze({
+    id,
+    projectId,
+    title: title.slice(0, 200),
+    viewport,
+    elements,
+    assetIds,
+    createdAt,
+    updatedAt,
+  });
+}
+
+/**
  * @param {unknown[]} arr
  * @returns {string[]}
  */
@@ -198,7 +242,7 @@ function parseAssetMeta(raw) {
 }
 
 /**
- * Validate a schema v1 BackupData object strictly.
+ * Validate a schema v2 BackupData object strictly.
  * @param {unknown} raw
  * @returns {{ ok: true; data: BackupData } | { ok: false; error: string }}
  */
@@ -226,6 +270,7 @@ export function validateBackupData(raw) {
     !Array.isArray(raw.projects) ||
     !Array.isArray(raw.tasks) ||
     !Array.isArray(raw.notes) ||
+    !Array.isArray(raw.whiteboards) ||
     !Array.isArray(raw.assets)
   ) {
     return {
@@ -234,7 +279,12 @@ export function validateBackupData(raw) {
     };
   }
 
-  const totalCount = raw.projects.length + raw.tasks.length + raw.notes.length + raw.assets.length;
+  const totalCount =
+    raw.projects.length +
+    raw.tasks.length +
+    raw.notes.length +
+    raw.whiteboards.length +
+    raw.assets.length;
   if (totalCount > MAX_IMPORT_RECORDS) {
     return {
       ok: false,
@@ -287,6 +337,22 @@ export function validateBackupData(raw) {
     notes.push(n);
   }
 
+  /** @type {Whiteboard[]} */
+  const whiteboards = [];
+  /** @type {Set<string>} */
+  const whiteboardIds = new Set();
+  for (const item of raw.whiteboards) {
+    const w = parseWhiteboard(item);
+    if (!w || whiteboardIds.has(w.id) || (w.projectId !== null && !projectIds.has(w.projectId))) {
+      return {
+        ok: false,
+        error: 'Données de tableau blanc invalides ou rattachées à un projet inexistant.',
+      };
+    }
+    whiteboardIds.add(w.id);
+    whiteboards.push(w);
+  }
+
   /** @type {AssetMeta[]} */
   const assets = [];
   /** @type {Set<string>} */
@@ -303,16 +369,23 @@ export function validateBackupData(raw) {
     assets.push(a);
   }
 
+  /** @type {BackupData} */
+  const data = {
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+    exportedAt,
+    projects,
+    tasks,
+    notes,
+    whiteboards,
+    assets,
+    ...(Array.isArray(raw.taskStatuses)
+      ? { taskStatuses: normalizeTaskStatuses(raw.taskStatuses) }
+      : {}),
+  };
+
   return {
     ok: true,
-    data: {
-      schemaVersion: 1,
-      exportedAt,
-      projects,
-      tasks,
-      notes,
-      assets,
-    },
+    data,
   };
 }
 
@@ -341,6 +414,14 @@ export function migrateBackupData(raw) {
       ok: false,
       error: `Cette sauvegarde utilise une version de schéma future (${version}) non supportée par cette version de Locavern.`,
     };
+  }
+  if (version === 1) {
+    const migrated = {
+      ...raw,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      whiteboards: Array.isArray(raw.whiteboards) ? raw.whiteboards : [],
+    };
+    return validateBackupData(migrated);
   }
   return validateBackupData(raw);
 }

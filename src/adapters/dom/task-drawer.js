@@ -1,11 +1,17 @@
 /** @import { AppCommand, AppState, ChecklistItem, RichTextDoc, StoreEffect, Task, TaskPriority, TaskStatus } from '../../types.d.ts' */
 
-import { EMPTY_RICH_DOC, collectDocAssetIds } from '../../core/model.js';
+import { EMPTY_RICH_DOC, collectDocAssetIds, getTaskStatusMeta } from '../../core/model.js';
 import { mountRichTextEditor } from '../rich-text-tiptap.js';
-import { closeDialogById, confirmAction, notify, openDialogById } from './app-shell.js';
+import {
+  applyDialogPresentation,
+  closeDialogById,
+  confirmAction,
+  notify,
+  openDialogById,
+} from './app-shell.js';
 
 /**
- * Open the Covenant Drawer (<dialog class="cv-drawer">) to create or edit a task.
+ * Open the Covenant dialog (drawer or modal per user preference) to create or edit a task.
  * @param {{
  *   store: {
  *     getState: () => AppState;
@@ -13,7 +19,7 @@ import { closeDialogById, confirmAction, notify, openDialogById } from './app-sh
  *   };
  *   task?: Task;
  *   defaultProjectId?: string | null;
- *   defaultStatus?: TaskStatus;
+ *   defaultStatus?: TaskStatus | null;
  *   resolveAssetUrl: (assetId: string) => Promise<string | null>;
  *   uploadLocalImage: (file: File) => Promise<{ assetId: string; alt: string } | null>;
  * }} opts
@@ -22,7 +28,7 @@ export function openTaskDrawer({
   store,
   task,
   defaultProjectId = null,
-  defaultStatus = 'todo',
+  defaultStatus,
   resolveAssetUrl,
   uploadLocalImage,
 }) {
@@ -33,6 +39,7 @@ export function openTaskDrawer({
   if (!drawer || !titleEl || !bodyEl || !footerEl) return;
 
   const state = store.getState();
+  applyDialogPresentation(drawer, state.preferences.inputPresentations.tasks);
   const isEdit = Boolean(task);
   const readOnly = state.readOnly;
   titleEl.textContent = isEdit ? 'Détails de la tâche' : 'Nouvelle tâche';
@@ -70,7 +77,12 @@ export function openTaskDrawer({
   titleError.id = 'task-title-error';
   titleError.className = 'cv-error';
   titleError.hidden = true;
-  titleError.textContent = 'Saisissez un titre de tâche.';
+  const titleErrIcon = document.createElement('i');
+  titleErrIcon.className = 'ph ph-warning-circle cv-icon';
+  titleErrIcon.setAttribute('aria-hidden', 'true');
+  const titleErrText = document.createElement('span');
+  titleErrText.textContent = 'Saisissez un titre de tâche.';
+  titleError.append(titleErrIcon, titleErrText);
   titleField.append(titleLabel, titleInput, titleError);
 
   // Project select
@@ -102,6 +114,7 @@ export function openTaskDrawer({
   projectField.append(projectLabel, projectSelectWrap);
 
   // Status + Priority row
+  const configuredStatuses = state.preferences.taskStatuses;
   const statusField = document.createElement('div');
   statusField.className = 'cv-field';
   const statusLabel = document.createElement('label');
@@ -114,19 +127,35 @@ export function openTaskDrawer({
   statusSelect.id = 'task-status-select';
   statusSelect.className = 'cv-input';
   statusSelect.disabled = readOnly;
-  /** @type {Array<[TaskStatus, string]>} */
-  const statusOptions = [
-    ['todo', 'À faire'],
-    ['in_progress', 'En cours'],
-    ['done', 'Terminé'],
-  ];
-  for (const [val, label] of statusOptions) {
+
+  const currentStatusMeta = task ? getTaskStatusMeta(task.status, configuredStatuses) : null;
+  if (currentStatusMeta?.kind === 'unknown' && task?.status) {
+    const unknownOpt = document.createElement('option');
+    unknownOpt.value = task.status;
+    unknownOpt.textContent = currentStatusMeta.label;
+    unknownOpt.disabled = true;
+    statusSelect.append(unknownOpt);
+  }
+
+  const noneOpt = document.createElement('option');
+  noneOpt.value = '';
+  noneOpt.textContent = 'Sans statut';
+  statusSelect.append(noneOpt);
+
+  for (const statusCfg of configuredStatuses) {
     const opt = document.createElement('option');
-    opt.value = val;
-    opt.textContent = label;
+    opt.value = statusCfg.id;
+    opt.textContent = statusCfg.label;
     statusSelect.append(opt);
   }
-  statusSelect.value = task?.status ?? defaultStatus;
+
+  const fallbackDefaultStatus =
+    defaultStatus !== undefined &&
+    defaultStatus !== null &&
+    configuredStatuses.some((s) => s.id === defaultStatus)
+      ? defaultStatus
+      : (configuredStatuses[0]?.id ?? '');
+  statusSelect.value = task ? (task.status ?? '') : fallbackDefaultStatus;
   statusWrap.append(statusSelect);
   statusField.append(statusLabel, statusWrap);
 
@@ -349,28 +378,45 @@ export function openTaskDrawer({
       titleInput.focus();
       return;
     }
+    titleInput.removeAttribute('aria-invalid');
+    titleInput.removeAttribute('aria-describedby');
+    titleError.hidden = true;
 
     const doc = editorHandle.getDoc();
     const assetIds = collectDocAssetIds(doc);
     const now = new Date().toISOString();
-    const status = /** @type {TaskStatus} */ (statusSelect.value);
+    const rawSelectedStatus = statusSelect.value;
+    const status = rawSelectedStatus ? /** @type {TaskStatus} */ (rawSelectedStatus) : null;
     const priority = /** @type {TaskPriority} */ (prioritySelect.value);
     const dueDate = dueInput.value ? dueInput.value : null;
 
     if (isEdit && task) {
+      /** @type {{
+       *   title: string;
+       *   projectId: string;
+       *   status?: TaskStatus | null;
+       *   priority: TaskPriority;
+       *   dueDate: string | null;
+       *   checklist: readonly ChecklistItem[];
+       *   descriptionDoc: RichTextDoc;
+       *   assetIds: readonly string[];
+       * }} */
+      const patch = {
+        title: cleanTitle,
+        projectId: projectSelect.value,
+        priority,
+        dueDate,
+        checklist,
+        descriptionDoc: doc,
+        assetIds,
+      };
+      if (status !== task.status) {
+        patch.status = status;
+      }
       store.dispatch({
         type: 'update_task',
         id: task.id,
-        patch: {
-          title: cleanTitle,
-          projectId: projectSelect.value,
-          status,
-          priority,
-          dueDate,
-          checklist,
-          descriptionDoc: doc,
-          assetIds,
-        },
+        patch,
         now,
       });
       notify({ status: 'success', title: 'Tâche enregistrée', text: cleanTitle });
@@ -397,6 +443,8 @@ export function openTaskDrawer({
   const onClose = () => {
     drawer.returnValue = '';
     editorHandle.destroy();
+    bodyEl.replaceChildren();
+    footerEl.replaceChildren();
     drawer.removeEventListener('close', onClose);
   };
   drawer.addEventListener('close', onClose);

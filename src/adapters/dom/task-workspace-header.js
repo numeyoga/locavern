@@ -1,7 +1,9 @@
 /** @import { AppCommand, AppState, StoreEffect, TaskDisplayMode } from '../../types.d.ts' */
 
+import { openStatusModal } from './status-modal.js';
+
 /**
- * Render the shared header for Task views (project filter, List/Kanban switch, New Task CTA).
+ * Render the shared header for Task views (project filter, List/Kanban switch, status config button, New Task CTA).
  * @param {{
  *   state: AppState;
  *   dispatch: (cmd: AppCommand) => { state: AppState; effects: StoreEffect[] };
@@ -75,6 +77,20 @@ export function createTaskWorkspaceHeader({ state, dispatch, onOpenNewTask }) {
 
   leftGroup.append(projectWrap, segFieldset);
 
+  const rightGroup = document.createElement('div');
+  rightGroup.className = 'lc-view-header__group';
+
+  const statusBtn = document.createElement('button');
+  statusBtn.type = 'button';
+  statusBtn.className = 'cv-btn';
+  statusBtn.id = 'btn-configure-statuses';
+  statusBtn.disabled = state.readOnly;
+  const statusIcon = document.createElement('i');
+  statusIcon.className = 'ph ph-columns cv-icon';
+  statusIcon.setAttribute('aria-hidden', 'true');
+  statusBtn.append(statusIcon, document.createTextNode(' Statuts'));
+  statusBtn.addEventListener('click', openStatusModal);
+
   const newBtn = document.createElement('button');
   newBtn.type = 'button';
   newBtn.className = 'cv-btn cv-btn--primary';
@@ -86,6 +102,7 @@ export function createTaskWorkspaceHeader({ state, dispatch, onOpenNewTask }) {
   newBtn.append(icon, document.createTextNode(' Nouvelle tâche'));
   newBtn.addEventListener('click', onOpenNewTask);
 
-  header.append(leftGroup, newBtn);
+  rightGroup.append(statusBtn, newBtn);
+  header.append(leftGroup, rightGroup);
   return header;
 }

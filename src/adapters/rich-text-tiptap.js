@@ -149,7 +149,7 @@ export function mountRichTextEditor({
   linkInput.className = 'cv-input';
   linkInput.placeholder = 'https://exemple.org';
   linkInput.style.flex = '1';
-  linkInput.style.minWidth = '160px';
+  linkInput.style.minWidth = 'min(100%, 10rem)';
 
   const linkApply = document.createElement('button');
   linkApply.type = 'button';

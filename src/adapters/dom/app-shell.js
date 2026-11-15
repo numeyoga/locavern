@@ -1,6 +1,19 @@
-/** @import { ActiveView } from '../../types.d.ts' */
+/** @import { ActiveView, InputPresentation } from '../../types.d.ts' */
+
+import { DEFAULT_TOAST_DURATION_SECONDS, normalizeToastDurationSeconds } from '../../core/model.js';
 
 const THEME_STORAGE_KEY = 'locavern-color-scheme';
+const TEXT_SIZE_STORAGE_KEY = 'locavern-text-size';
+
+let toastDurationMs = DEFAULT_TOAST_DURATION_SECONDS * 1000;
+
+/**
+ * Configure the auto-dismiss delay (in seconds) for success and info toasts.
+ * @param {number} seconds
+ */
+export function setToastDurationSeconds(seconds) {
+  toastDurationMs = normalizeToastDurationSeconds(seconds) * 1000;
+}
 
 /**
  * Resolve current OS color scheme preference.
@@ -82,11 +95,81 @@ export function initThemeControl() {
 }
 
 /**
+ * Normalize a persisted or event text size token.
+ * @param {string | null | undefined} value
+ * @returns {'auto' | 'standard' | 'comfortable' | 'large'}
+ */
+function normalizeTextSize(value) {
+  return value === 'standard' || value === 'comfortable' || value === 'large' ? value : 'auto';
+}
+
+/**
+ * Initialize Covenant TextSize persistence (`locavern-text-size`) and cross-tab sync.
+ */
+export function initTextSizeControl() {
+  /** @type {'auto' | 'standard' | 'comfortable' | 'large'} */
+  let stored;
+  try {
+    stored = normalizeTextSize(localStorage.getItem(TEXT_SIZE_STORAGE_KEY));
+  } catch {
+    stored = 'auto';
+  }
+
+  if (typeof window.Covenant?.setTextSize === 'function') {
+    if (window.Covenant.getTextSize?.() !== stored) {
+      window.Covenant.setTextSize(stored);
+    }
+  } else if (stored === 'auto') {
+    delete document.documentElement.dataset.textSize;
+  } else {
+    document.documentElement.dataset.textSize = stored;
+  }
+
+  document.addEventListener('cv:textsize', (event) => {
+    const custom = /** @type {CustomEvent<{ size?: string }>} */ (event);
+    const next = normalizeTextSize(custom.detail?.size);
+    try {
+      if (next === 'auto') {
+        localStorage.removeItem(TEXT_SIZE_STORAGE_KEY);
+      } else {
+        localStorage.setItem(TEXT_SIZE_STORAGE_KEY, next);
+      }
+    } catch {
+      // Ignore storage access errors in restricted contexts.
+    }
+  });
+
+  window.addEventListener('storage', (event) => {
+    if (event.key === TEXT_SIZE_STORAGE_KEY) {
+      const next = normalizeTextSize(event.newValue);
+      if (typeof window.Covenant?.setTextSize === 'function') {
+        if (window.Covenant.getTextSize?.() !== next) {
+          window.Covenant.setTextSize(next);
+        }
+      } else if (next === 'auto') {
+        delete document.documentElement.dataset.textSize;
+      } else {
+        document.documentElement.dataset.textSize = next;
+      }
+    }
+  });
+}
+
+/**
  * Display a Covenant toast notification.
- * @param {{ status: 'success' | 'warning' | 'danger' | 'info'; title: string; text?: string }} opts
+ * Success and info toasts close automatically after the configured duration;
+ * warning and danger toasts stay until manually dismissed (WCAG 2.2.1).
+ * @param {{ status: 'success' | 'warning' | 'danger' | 'info'; title: string; text?: string; timeout?: number }} opts
+ * @returns {HTMLElement | undefined}
  */
 export function notify(opts) {
-  window.Covenant?.toast?.(opts);
+  const timeout =
+    opts.timeout != null
+      ? opts.timeout
+      : opts.status === 'danger' || opts.status === 'warning'
+        ? 0
+        : toastDurationMs;
+  return window.Covenant?.toast?.({ ...opts, timeout });
 }
 
 /**
@@ -95,6 +178,28 @@ export function notify(opts) {
  */
 export function initCovenant(root) {
   window.Covenant?.init?.(root);
+}
+
+/**
+ * Switch a Covenant <dialog> and its header/title/body/footer slots between drawer and modal.
+ * @param {HTMLDialogElement} dialog
+ * @param {InputPresentation} presentation
+ */
+export function applyDialogPresentation(dialog, presentation) {
+  const mode = presentation === 'modal' ? 'modal' : 'drawer';
+  const prev = mode === 'modal' ? 'drawer' : 'modal';
+
+  dialog.classList.remove(`cv-${prev}`);
+  dialog.classList.add(`cv-${mode}`);
+  dialog.dataset.inputPresentation = mode;
+
+  for (const part of ['header', 'title', 'body', 'footer']) {
+    const slot = dialog.querySelector(`.cv-drawer__${part}, .cv-modal__${part}`);
+    if (slot) {
+      slot.classList.remove(`cv-${prev}__${part}`);
+      slot.classList.add(`cv-${mode}__${part}`);
+    }
+  }
 }
 
 /**
@@ -178,6 +283,7 @@ const VIEW_TITLES = {
   tasks: 'Tâches',
   projects: 'Projets',
   notes: 'Notes',
+  whiteboards: 'Tableaux blancs',
 };
 
 /**
@@ -251,6 +357,7 @@ export function renderReadOnlyBanner(readOnly, onRetryLock) {
  */
 export function wireAppShell({ onSelectView, onCommand }) {
   initThemeControl();
+  initTextSizeControl();
 
   document.querySelectorAll('[data-nav-view]').forEach((link) => {
     link.addEventListener('click', (event) => {

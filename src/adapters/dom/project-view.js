@@ -1,9 +1,15 @@
 /** @import { AppCommand, AppState, Project, StoreEffect } from '../../types.d.ts' */
 
-import { closeDialogById, confirmAction, notify, openDialogById } from './app-shell.js';
+import {
+  applyDialogPresentation,
+  closeDialogById,
+  confirmAction,
+  notify,
+  openDialogById,
+} from './app-shell.js';
 
 /**
- * Open the Covenant modal to create or edit a project.
+ * Open the Covenant dialog (modal or drawer per user preference) to create or edit a project.
  * @param {{
  *   store: {
  *     getState: () => AppState;
@@ -18,6 +24,10 @@ export function openProjectModal({ store, project }) {
   const bodyEl = document.getElementById('modal-project-body');
   const footerEl = document.getElementById('modal-project-footer');
   if (!modal || !titleEl || !bodyEl || !footerEl) return;
+
+  const state = store.getState();
+  const readOnly = state.readOnly;
+  applyDialogPresentation(modal, state.preferences.inputPresentations.projects);
 
   const isEdit = Boolean(project);
   titleEl.textContent = isEdit ? 'Modifier le projet' : 'Nouveau projet';
@@ -45,6 +55,7 @@ export function openProjectModal({ store, project }) {
   nameInput.required = true;
   nameInput.maxLength = 120;
   nameInput.autofocus = true;
+  nameInput.disabled = readOnly;
   nameInput.value = project?.name ?? '';
 
   const nameError = document.createElement('span');
@@ -71,6 +82,7 @@ export function openProjectModal({ store, project }) {
   descInput.className = 'cv-input';
   descInput.rows = 3;
   descInput.maxLength = 1000;
+  descInput.disabled = readOnly;
   descInput.value = project?.description ?? '';
   descField.append(descLabel, descInput);
 
@@ -91,12 +103,15 @@ export function openProjectModal({ store, project }) {
   saveBtn.type = 'submit';
   saveBtn.setAttribute('form', 'form-project');
   saveBtn.className = 'cv-btn cv-btn--primary';
+  saveBtn.disabled = readOnly;
   saveBtn.textContent = isEdit ? 'Enregistrer' : 'Créer le projet';
 
   footerEl.replaceChildren(cancelBtn, saveBtn);
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
+    if (readOnly) return;
+
     const cleanName = nameInput.value.trim();
     if (!cleanName) {
       nameInput.setAttribute('aria-invalid', 'true');
@@ -105,6 +120,9 @@ export function openProjectModal({ store, project }) {
       nameInput.focus();
       return;
     }
+    nameInput.removeAttribute('aria-invalid');
+    nameInput.removeAttribute('aria-describedby');
+    nameError.hidden = true;
 
     const now = new Date().toISOString();
     if (isEdit && project) {
@@ -147,9 +165,10 @@ export function openProjectModal({ store, project }) {
  *     getState: () => AppState;
  *     dispatch: (cmd: AppCommand) => { state: AppState; effects: StoreEffect[] };
  *   };
+ *   onOpenProjectNotes?: (projectId: string) => void;
  * }} opts
  */
-export function renderProjectsView({ container, store }) {
+export function renderProjectsView({ container, store, onOpenProjectNotes }) {
   const state = store.getState();
 
   const header = document.createElement('div');
@@ -230,14 +249,16 @@ export function renderProjectsView({ container, store }) {
 
     const taskCount = state.tasks.filter((t) => t.projectId === project.id).length;
     const noteCount = state.notes.filter((n) => n.projectId === project.id).length;
+    const wbCount = state.whiteboards.filter((w) => w.projectId === project.id).length;
     const meta = document.createElement('div');
     meta.className = 'cv-card__meta cv-num';
-    meta.textContent = `${taskCount} tâche${taskCount > 1 ? 's' : ''} · ${noteCount} note${noteCount > 1 ? 's' : ''}`;
+    meta.textContent = `${taskCount} tâche${taskCount > 1 ? 's' : ''} · ${noteCount} note${noteCount > 1 ? 's' : ''} · ${wbCount} tableau${wbCount > 1 ? 'x' : ''} blanc${wbCount > 1 ? 's' : ''}`;
 
     const footer = document.createElement('div');
-    footer.className = 'cv-card__footer';
-    footer.style.flexWrap = 'wrap';
-    footer.style.gap = 'var(--cv-space-2)';
+    footer.className = 'cv-card__footer lc-project-card__footer';
+
+    const openGroup = document.createElement('div');
+    openGroup.className = 'lc-project-card__actions';
 
     const openTasksBtn = document.createElement('button');
     openTasksBtn.type = 'button';
@@ -249,8 +270,24 @@ export function renderProjectsView({ container, store }) {
       store.dispatch({ type: 'set_view', view: 'tasks' });
     });
 
+    const openNotesBtn = document.createElement('button');
+    openNotesBtn.type = 'button';
+    openNotesBtn.className = 'cv-btn cv-btn--sm';
+    openNotesBtn.textContent = 'Ouvrir les notes';
+    openNotesBtn.setAttribute('aria-label', `Ouvrir les notes de ${project.name}`);
+    openNotesBtn.addEventListener('click', () => {
+      if (onOpenProjectNotes) {
+        onOpenProjectNotes(project.id);
+        return;
+      }
+      store.dispatch({ type: 'select_project', projectId: project.id });
+      store.dispatch({ type: 'set_view', view: 'notes' });
+    });
+
+    openGroup.append(openTasksBtn, openNotesBtn);
+
     const actionsGroup = document.createElement('div');
-    actionsGroup.className = 'lc-table-actions';
+    actionsGroup.className = 'lc-project-card__actions';
 
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
@@ -287,7 +324,7 @@ export function renderProjectsView({ container, store }) {
     deleteBtn.addEventListener('click', async () => {
       const confirmed = await confirmAction({
         title: `Supprimer « ${project.name} » ?`,
-        message: `Ce projet et ses ${taskCount} tâche(s) seront supprimés. Les notes associées resteront accessibles sans projet.`,
+        message: `Ce projet et ses ${taskCount} tâche(s) seront supprimés. Les notes et tableaux blancs associés resteront accessibles sans projet.`,
         confirmLabel: 'Supprimer le projet',
         danger: true,
       });
@@ -297,7 +334,7 @@ export function renderProjectsView({ container, store }) {
     });
 
     actionsGroup.append(editBtn, archiveBtn, deleteBtn);
-    footer.append(openTasksBtn, actionsGroup);
+    footer.append(openGroup, actionsGroup);
 
     card.append(cardHead, desc, meta, footer);
     grid.append(card);

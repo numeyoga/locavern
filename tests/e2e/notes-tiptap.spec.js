@@ -23,9 +23,12 @@ test.describe('Notes enrichies Tiptap & images locales (Étape 5)', () => {
     await page.locator('[data-nav-view="notes"]').click();
     await expect(page.locator('#topbar-title')).toHaveText('Notes');
 
-    // Créer une note
+    // Créer une note via la fenêtre de saisie dédiée
     await page.getByRole('button', { name: 'Créer une note' }).click();
-    await page.locator('#note-title-input').fill('Note architecture');
+    await expect(page.locator('#dialog-note')).toBeVisible();
+    await page.locator('#note-dialog-title-input').fill('Note architecture');
+    await page.locator('#dialog-note button[type="submit"]').click();
+    await expect(page.locator('#note-title-input')).toHaveValue('Note architecture');
 
     const editor = page.locator('.lc-editor__surface .ProseMirror');
     await editor.click();

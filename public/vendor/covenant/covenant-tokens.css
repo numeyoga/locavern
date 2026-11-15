@@ -135,18 +135,18 @@
 
 :root {
   --cv-space-0: 0;
-  --cv-space-1: 2px;
-  --cv-space-2: 4px;
-  --cv-space-3: 8px;
-  --cv-space-4: 12px;
-  --cv-space-5: 16px;
-  --cv-space-6: 20px;
-  --cv-space-7: 24px;
-  --cv-space-8: 32px;
-  --cv-space-9: 40px;
-  --cv-space-10: 48px;
-  --cv-space-11: 64px;
-  --cv-space-12: 80px;
+  --cv-space-1: 0.125rem;
+  --cv-space-2: 0.25rem;
+  --cv-space-3: 0.5rem;
+  --cv-space-4: 0.75rem;
+  --cv-space-5: 1rem;
+  --cv-space-6: 1.25rem;
+  --cv-space-7: 1.5rem;
+  --cv-space-8: 2rem;
+  --cv-space-9: 2.5rem;
+  --cv-space-10: 3rem;
+  --cv-space-11: 4rem;
+  --cv-space-12: 5rem;
   --cv-radius-none: 0;
   --cv-radius-xs: 2px;
   --cv-radius-sm: 4px;
@@ -154,27 +154,27 @@
   --cv-radius-lg: 12px;
   --cv-radius-xl: 16px;
   --cv-radius-full: 9999px;
-  --cv-row-sm: 28px;
-  --cv-row-md: 32px;
-  --cv-row-lg: 40px;
+  --cv-row-sm: 1.75rem;
+  --cv-row-md: 2rem;
+  --cv-row-lg: 2.5rem;
   --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', 'Consolas', monospace;
 }
 
-.cv-display-lg { font-family: var(--font-sans); font-size: 48px; line-height: 1.2; font-weight: 600; letter-spacing: -0.01em; }
-.cv-display-md { font-family: var(--font-sans); font-size: 36px; line-height: 1.2; font-weight: 600; letter-spacing: -0.01em; }
-.cv-display-sm { font-family: var(--font-sans); font-size: 28px; line-height: 1.2; font-weight: 600; letter-spacing: -0.01em; }
-.cv-h1 { font-family: var(--font-sans); font-size: 22px; line-height: 1.35; font-weight: 600; letter-spacing: -0.01em; }
-.cv-h2 { font-family: var(--font-sans); font-size: 18px; line-height: 1.35; font-weight: 600; }
-.cv-h3 { font-family: var(--font-sans); font-size: 16px; line-height: 1.35; font-weight: 600; }
-.cv-h4 { font-family: var(--font-sans); font-size: 14px; line-height: 1.35; font-weight: 600; }
-.cv-body-lg { font-family: var(--font-sans); font-size: 14px; line-height: 1.5; font-weight: 400; }
-.cv-body { font-family: var(--font-sans); font-size: 13px; line-height: 1.5; font-weight: 400; }
-.cv-body-sm { font-family: var(--font-sans); font-size: 12px; line-height: 1.5; font-weight: 400; }
-.cv-label { font-family: var(--font-sans); font-size: 13px; line-height: 1.3; font-weight: 500; }
-.cv-label-sm { font-family: var(--font-sans); font-size: 12px; line-height: 1.3; font-weight: 500; }
-.cv-overline { font-family: var(--font-sans); font-size: 11px; line-height: 1.3; font-weight: 600; letter-spacing: 0.08em; }
-.cv-caption { font-family: var(--font-sans); font-size: 12px; line-height: 1.35; font-weight: 400; }
-.cv-mono { font-family: var(--font-mono); font-size: 13px; line-height: 1.5; font-weight: 400; }
-.cv-mono-sm { font-family: var(--font-mono); font-size: 12px; line-height: 1.5; font-weight: 400; }
-.cv-kbd { font-family: var(--font-mono); font-size: 12px; line-height: 1; font-weight: 500; }
+.cv-display-lg { font-family: var(--font-sans); font-size: 3rem; line-height: 1.2; font-weight: 600; letter-spacing: -0.01em; }
+.cv-display-md { font-family: var(--font-sans); font-size: 2.25rem; line-height: 1.2; font-weight: 600; letter-spacing: -0.01em; }
+.cv-display-sm { font-family: var(--font-sans); font-size: 1.75rem; line-height: 1.2; font-weight: 600; letter-spacing: -0.01em; }
+.cv-h1 { font-family: var(--font-sans); font-size: 1.375rem; line-height: 1.35; font-weight: 600; letter-spacing: -0.01em; }
+.cv-h2 { font-family: var(--font-sans); font-size: 1.125rem; line-height: 1.35; font-weight: 600; }
+.cv-h3 { font-family: var(--font-sans); font-size: 1rem; line-height: 1.35; font-weight: 600; }
+.cv-h4 { font-family: var(--font-sans); font-size: 0.875rem; line-height: 1.35; font-weight: 600; }
+.cv-body-lg { font-family: var(--font-sans); font-size: 0.875rem; line-height: 1.5; font-weight: 400; }
+.cv-body { font-family: var(--font-sans); font-size: 0.8125rem; line-height: 1.5; font-weight: 400; }
+.cv-body-sm { font-family: var(--font-sans); font-size: 0.75rem; line-height: 1.5; font-weight: 400; }
+.cv-label { font-family: var(--font-sans); font-size: 0.8125rem; line-height: 1.3; font-weight: 500; }
+.cv-label-sm { font-family: var(--font-sans); font-size: 0.75rem; line-height: 1.3; font-weight: 500; }
+.cv-overline { font-family: var(--font-sans); font-size: 0.75rem; line-height: 1.3; font-weight: 600; letter-spacing: 0.08em; }
+.cv-caption { font-family: var(--font-sans); font-size: 0.75rem; line-height: 1.35; font-weight: 400; }
+.cv-mono { font-family: var(--font-mono); font-size: 0.8125rem; line-height: 1.5; font-weight: 400; }
+.cv-mono-sm { font-family: var(--font-mono); font-size: 0.75rem; line-height: 1.5; font-weight: 400; }
+.cv-kbd { font-family: var(--font-mono); font-size: 0.75rem; line-height: 1; font-weight: 500; }

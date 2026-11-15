@@ -1,9 +1,9 @@
-/** @import { AppPreferences, AssetMeta, HydratePayload, Note, Project, StoreEffect, Task } from '../types.d.ts' */
+/** @import { AppPreferences, AssetMeta, HydratePayload, Note, Project, StoreEffect, Task, Whiteboard } from '../types.d.ts' */
 
 import { openDB } from 'idb';
 
 const DB_NAME = 'locavern-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const LOCK_NAME = 'locavern-write-lock';
 const LOCK_CHANNEL = 'locavern-lock-channel';
 
@@ -30,6 +30,9 @@ export function openLocavernDb() {
       if (!db.objectStoreNames.contains('notes')) {
         db.createObjectStore('notes', { keyPath: 'id' });
       }
+      if (!db.objectStoreNames.contains('whiteboards')) {
+        db.createObjectStore('whiteboards', { keyPath: 'id' });
+      }
       if (!db.objectStoreNames.contains('assets')) {
         db.createObjectStore('assets', { keyPath: 'id' });
       }
@@ -43,12 +46,16 @@ export function openLocavernDb() {
  * @returns {Promise<HydratePayload>}
  */
 export async function loadHydrationPayload(db) {
-  const tx = db.transaction(['meta', 'projects', 'tasks', 'notes', 'assets'], 'readonly');
-  const [prefRow, projects, tasks, notes, rawAssets] = await Promise.all([
+  const tx = db.transaction(
+    ['meta', 'projects', 'tasks', 'notes', 'whiteboards', 'assets'],
+    'readonly',
+  );
+  const [prefRow, projects, tasks, notes, whiteboards, rawAssets] = await Promise.all([
     tx.objectStore('meta').get('preferences'),
     tx.objectStore('projects').getAll(),
     tx.objectStore('tasks').getAll(),
     tx.objectStore('notes').getAll(),
+    tx.objectStore('whiteboards').getAll(),
     tx.objectStore('assets').getAll(),
   ]);
   await tx.done;
@@ -69,6 +76,7 @@ export async function loadHydrationPayload(db) {
     projects: /** @type {Project[]} */ (projects),
     tasks: /** @type {Task[]} */ (tasks),
     notes: /** @type {Note[]} */ (notes),
+    whiteboards: /** @type {Whiteboard[]} */ (whiteboards),
     assets,
     preferences,
   };
@@ -115,18 +123,22 @@ export async function loadAllAssetBlobs(db) {
 /**
  * Replace all collections + binary blobs atomically in IndexedDB.
  * @param {import('idb').IDBPDatabase} db
- * @param {{ projects: readonly Project[]; tasks: readonly Task[]; notes: readonly Note[]; assets: readonly AssetMeta[] }} payload
+ * @param {{ projects: readonly Project[]; tasks: readonly Task[]; notes: readonly Note[]; whiteboards: readonly Whiteboard[]; assets: readonly AssetMeta[] }} payload
  * @param {ReadonlyMap<string, Blob>} blobs
  */
 export async function replaceAllWithBlobs(db, payload, blobs) {
-  const tx = db.transaction(['meta', 'projects', 'tasks', 'notes', 'assets'], 'readwrite');
+  const tx = db.transaction(
+    ['meta', 'projects', 'tasks', 'notes', 'whiteboards', 'assets'],
+    'readwrite',
+  );
   await Promise.all([
     tx.objectStore('projects').clear(),
     tx.objectStore('tasks').clear(),
     tx.objectStore('notes').clear(),
+    tx.objectStore('whiteboards').clear(),
     tx.objectStore('assets').clear(),
   ]);
-  await tx.objectStore('meta').put({ key: 'schema', schemaVersion: 1 });
+  await tx.objectStore('meta').put({ key: 'schema', schemaVersion: 2 });
   for (const p of payload.projects) {
     tx.objectStore('projects').put(p);
   }
@@ -135,6 +147,9 @@ export async function replaceAllWithBlobs(db, payload, blobs) {
   }
   for (const n of payload.notes) {
     tx.objectStore('notes').put(n);
+  }
+  for (const w of payload.whiteboards) {
+    tx.objectStore('whiteboards').put(w);
   }
   for (const a of payload.assets) {
     const blob = blobs.get(a.id);
@@ -158,13 +173,16 @@ export async function applyStoreEffects(db, effects) {
         break;
 
       case 'remove_project': {
-        const tx = db.transaction(['projects', 'tasks', 'notes'], 'readwrite');
+        const tx = db.transaction(['projects', 'tasks', 'notes', 'whiteboards'], 'readwrite');
         await tx.objectStore('projects').delete(effect.id);
         for (const taskId of effect.deletedTaskIds) {
           tx.objectStore('tasks').delete(taskId);
         }
         for (const note of effect.updatedNotes) {
           tx.objectStore('notes').put(note);
+        }
+        for (const wb of effect.updatedWhiteboards) {
+          tx.objectStore('whiteboards').put(wb);
         }
         await tx.done;
         break;
@@ -193,6 +211,14 @@ export async function applyStoreEffects(db, effects) {
 
       case 'remove_note':
         await db.delete('notes', effect.id);
+        break;
+
+      case 'persist_whiteboard':
+        await db.put('whiteboards', effect.whiteboard);
+        break;
+
+      case 'remove_whiteboard':
+        await db.delete('whiteboards', effect.id);
         break;
 
       case 'persist_asset_meta': {
