@@ -8,6 +8,7 @@ import {
   selectUnmappedKanbanTasks,
 } from '../../core/store.js';
 import { confirmAction, initCovenant, notify } from './app-shell.js';
+import { setTooltip } from './tooltip.js';
 import { openStatusModal } from './status-modal.js';
 import { createTaskWorkspaceHeader } from './task-workspace-header.js';
 
@@ -408,6 +409,7 @@ export function renderKanbanView({
       quickAddBtn.className = 'cv-btn cv-btn--ghost cv-btn--icon cv-btn--sm';
       quickAddBtn.disabled = currentState.readOnly;
       quickAddBtn.setAttribute('aria-label', `Ajouter une tâche dans ${colMeta.label}`);
+      setTooltip(quickAddBtn, `Ajouter une tâche dans ${colMeta.label}`);
       const addIc = document.createElement('i');
       addIc.className = 'ph ph-plus cv-icon';
       addIc.setAttribute('aria-hidden', 'true');
@@ -634,6 +636,7 @@ export function renderKanbanView({
         menuBtn.setAttribute('aria-haspopup', 'menu');
         menuBtn.setAttribute('aria-expanded', 'false');
         menuBtn.setAttribute('aria-label', `Actions pour « ${task.title} »`);
+        setTooltip(menuBtn, 'Actions sur la tâche');
         const dotsIc = document.createElement('i');
         dotsIc.className = 'ph ph-dots-three-vertical cv-icon';
         dotsIc.setAttribute('aria-hidden', 'true');
@@ -827,6 +830,6 @@ export function renderKanbanView({
     renderBoard();
   });
 
-  renderBoard();
   container.replaceChildren(header, filtersBar, hint, boardSlot);
+  renderBoard();
 }

@@ -18,6 +18,7 @@ import TaskList from '@tiptap/extension-task-list';
 import Text from '@tiptap/extension-text';
 import { UndoRedo } from '@tiptap/extensions';
 import { EMPTY_RICH_DOC, sanitizeLinkHref, sanitizeRichTextDoc } from '../core/model.js';
+import { initTooltips, setTooltip } from './dom/tooltip.js';
 
 /**
  * Create a custom Tiptap Node for local-only images referenced by IndexedDB assetId.
@@ -88,6 +89,7 @@ function makeToolbarButton({ icon, label, toggle = false, onClick }) {
   btn.type = 'button';
   btn.className = 'cv-btn cv-btn--ghost cv-btn--sm';
   btn.setAttribute('aria-label', label);
+  setTooltip(btn, label);
   if (toggle) {
     btn.setAttribute('aria-pressed', 'false');
   }
@@ -182,6 +184,9 @@ export function mountRichTextEditor({
     root.append(surface);
   }
   container.replaceChildren(root);
+  if (editable) {
+    initTooltips(toolbar);
+  }
 
   const initialContent = /** @type {Content} */ (
     /** @type {unknown} */ (sanitizeRichTextDoc(initialDoc ?? EMPTY_RICH_DOC))

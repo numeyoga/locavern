@@ -14,6 +14,7 @@ import { createTemplatePicker } from './template-picker.js';
 import { mountRichTextEditor } from '../rich-text-tiptap.js';
 import { createLinkEditor } from './link-editor.js';
 import { createTagEditor } from './tag-editor.js';
+import { initTooltips, setTooltip } from './tooltip.js';
 import {
   applyDialogPresentation,
   closeDialogById,
@@ -320,6 +321,7 @@ export function openTaskDrawer({
       rmBtn.type = 'button';
       rmBtn.className = 'cv-btn cv-btn--ghost cv-btn--icon cv-btn--sm';
       rmBtn.setAttribute('aria-label', `Retirer ${item.text}`);
+      setTooltip(rmBtn, 'Retirer l’étape');
       rmBtn.disabled = readOnly;
       const rmIcon = document.createElement('i');
       rmIcon.className = 'ph ph-x cv-icon';
@@ -333,6 +335,7 @@ export function openTaskDrawer({
       row.append(checkLabel, rmBtn);
       checklistList.append(row);
     }
+    initTooltips(checklistList);
   }
 
   checklistAddBtn.addEventListener('click', () => {

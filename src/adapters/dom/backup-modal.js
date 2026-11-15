@@ -11,6 +11,7 @@ import {
   setLastBackupAt,
 } from '../storage-idb.js';
 import { closeDialogById, confirmAction, notify } from './app-shell.js';
+import { initTooltips, setTooltip } from './tooltip.js';
 
 /**
  * Format byte sizes into readable Kio / Mio labels.
@@ -60,6 +61,7 @@ function createPasswordField({ id, label, autocomplete, describedBy }) {
   toggleBtn.className = 'cv-btn cv-btn--ghost cv-btn--icon lc-password-toggle';
   toggleBtn.setAttribute('aria-pressed', 'false');
   toggleBtn.setAttribute('aria-label', `Afficher : ${label}`);
+  setTooltip(toggleBtn, 'Afficher le mot de passe');
 
   const icon = document.createElement('i');
   icon.className = 'ph ph-eye cv-icon';
@@ -71,6 +73,7 @@ function createPasswordField({ id, label, autocomplete, describedBy }) {
     input.type = revealed ? 'text' : 'password';
     toggleBtn.setAttribute('aria-pressed', revealed ? 'true' : 'false');
     toggleBtn.setAttribute('aria-label', revealed ? `Masquer : ${label}` : `Afficher : ${label}`);
+    setTooltip(toggleBtn, revealed ? 'Masquer le mot de passe' : 'Afficher le mot de passe');
     icon.className = revealed ? 'ph ph-eye-slash cv-icon' : 'ph ph-eye cv-icon';
   };
 
@@ -850,6 +853,7 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
     resetSection.append(resetTitle, resetBtn);
 
     modalBody.replaceChildren(statsSection, exportSection, importSection, resetSection);
+    initTooltips(modalBody);
   }
 
   // Re-render whenever modal is opened

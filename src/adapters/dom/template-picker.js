@@ -1,3 +1,5 @@
+import { setTooltip } from './tooltip.js';
+
 /** @import { LocalTemplate } from '../../types.d.ts' */
 
 /**
@@ -73,7 +75,7 @@ export function createTemplatePicker({
   deleteBtn.id = `${idPrefix}-delete`;
   deleteBtn.className = 'cv-btn cv-btn--ghost cv-btn--sm';
   deleteBtn.setAttribute('aria-label', 'Supprimer le modèle sélectionné');
-  deleteBtn.title = 'Supprimer ce modèle personnalisé';
+  setTooltip(deleteBtn, 'Supprimer ce modèle personnalisé');
   deleteBtn.hidden = true;
   const delIc = document.createElement('i');
   delIc.className = 'ph ph-trash cv-icon';

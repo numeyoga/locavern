@@ -4,6 +4,7 @@ import { collectWhiteboardAssetIds } from '../../core/model.js';
 import { selectProjectById, selectTemplates, selectWhiteboards } from '../../core/store.js';
 import { instantiateWhiteboardTemplate } from '../../core/templates.js';
 import { createTemplatePicker } from './template-picker.js';
+import { initTooltips } from './tooltip.js';
 import { triggerArchiveDownload } from '../archive-file.js';
 import { mountWhiteboardCanvas } from '../whiteboard-canvas.js';
 import { closeDialogById, confirmAction, notify, openDialogById } from './app-shell.js';
@@ -739,6 +740,7 @@ export function renderWhiteboardView({
 
     layout.append(listEl, editorCard);
     bodySlot.replaceChildren(layout);
+    initTooltips(bodySlot);
   }
 
   projectFilter.addEventListener('change', () => {

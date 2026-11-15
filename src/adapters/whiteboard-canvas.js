@@ -24,6 +24,7 @@ import {
   snapValueToGrid,
   stepValueWithGrid,
 } from '../core/whiteboard.js';
+import { initTooltips, setTooltip } from './dom/tooltip.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MAX_HISTORY = 50;
@@ -185,7 +186,7 @@ function createToolbarBtn({ icon, label, action, tool, toggle = false, text }) {
   btn.type = 'button';
   btn.className = 'cv-btn cv-btn--ghost cv-btn--sm';
   btn.setAttribute('aria-label', label);
-  btn.title = label;
+  setTooltip(btn, label);
   if (action) btn.dataset.wbAction = action;
   if (tool) btn.dataset.wbTool = tool;
   if (toggle) btn.setAttribute('aria-pressed', 'false');
@@ -449,7 +450,7 @@ export function mountWhiteboardCanvas({
     btn.setAttribute('role', 'radio');
     btn.setAttribute('aria-checked', String(colorToken === activeColor));
     btn.setAttribute('aria-label', `Couleur ${COLOR_LABELS[colorToken]}`);
-    btn.title = COLOR_LABELS[colorToken];
+    setTooltip(btn, COLOR_LABELS[colorToken]);
 
     const swatch = document.createElement('span');
     swatch.className = `lc-wb-swatch lc-wb-swatch--${colorToken}`;
@@ -480,7 +481,7 @@ export function mountWhiteboardCanvas({
     action: 'toggle-transparent-bg',
     toggle: true,
   });
-  transparentBgBtn.title = 'Fond transparent (permet d’encadrer un autre élément)';
+  setTooltip(transparentBgBtn, 'Fond transparent (permet d’encadrer un autre élément)');
   transparentBgBtn.addEventListener('click', () => {
     if (!editable) return;
     const bgTargets = elements.filter(
@@ -540,7 +541,7 @@ export function mountWhiteboardCanvas({
     label: 'Avancer d’un niveau',
     action: 'bring-forward',
   });
-  bringForwardBtn.title = 'Avancer d’un niveau (Page précédente)';
+  setTooltip(bringForwardBtn, 'Avancer d’un niveau (Page précédente)');
   bringForwardBtn.addEventListener('click', () => {
     if (editable && selectedIds.size === 1 && primarySelectedId) {
       stepSelectedLayer(1);
@@ -552,7 +553,7 @@ export function mountWhiteboardCanvas({
     label: 'Reculer d’un niveau',
     action: 'send-backward',
   });
-  sendBackwardBtn.title = 'Reculer d’un niveau (Page suivante)';
+  setTooltip(sendBackwardBtn, 'Reculer d’un niveau (Page suivante)');
   sendBackwardBtn.addEventListener('click', () => {
     if (editable && selectedIds.size === 1 && primarySelectedId) {
       stepSelectedLayer(-1);
@@ -602,7 +603,7 @@ export function mountWhiteboardCanvas({
     action: 'toggle-grid',
     toggle: true,
   });
-  gridBtn.title = 'Afficher ou masquer la grille d’alignement';
+  setTooltip(gridBtn, 'Afficher ou masquer la grille d’alignement');
   gridBtn.addEventListener('click', () => {
     gridVisible = !gridVisible;
     syncGridDisplay();
@@ -616,7 +617,7 @@ export function mountWhiteboardCanvas({
     action: 'toggle-snap',
     toggle: true,
   });
-  snapBtn.title = `Magnétisme sur la grille (pas de ${GRID_SIZE} px)`;
+  setTooltip(snapBtn, `Magnétisme sur la grille (pas de ${GRID_SIZE} px)`);
   snapBtn.addEventListener('click', () => {
     if (!editable) return;
     snapToGrid = !snapToGrid;
@@ -646,6 +647,7 @@ export function mountWhiteboardCanvas({
   zoomResetBtn.className = 'cv-btn cv-btn--ghost cv-btn--sm cv-num';
   zoomResetBtn.dataset.wbAction = 'zoom-reset';
   zoomResetBtn.setAttribute('aria-label', 'Réinitialiser le zoom à 100 %');
+  setTooltip(zoomResetBtn, 'Réinitialiser le zoom à 100 %');
   zoomResetBtn.textContent = `${Math.round(viewport.zoom * 100)} %`;
   zoomResetBtn.addEventListener('click', () => {
     setViewport({ panX: 0, panY: 0, zoom: 1 });
@@ -679,7 +681,7 @@ export function mountWhiteboardCanvas({
       action: 'toggle-maximize',
       toggle: true,
     });
-    maximizeBtn.title = 'Afficher en taille maximum';
+    setTooltip(maximizeBtn, 'Afficher en taille maximum');
     maximizeBtn.addEventListener('click', () => {
       onToggleMaximize();
     });
@@ -813,6 +815,7 @@ export function mountWhiteboardCanvas({
 
   root.append(toolbar, textEditorBar, stage, announcer, fileInput);
   container.replaceChildren(root);
+  initTooltips(toolbar);
 
   /**
    * @param {WhiteboardElementType} type
@@ -980,7 +983,10 @@ export function mountWhiteboardCanvas({
     root.dataset.wbMaximized = String(maximized);
     if (maximizeBtn) {
       maximizeBtn.setAttribute('aria-pressed', String(maximized));
-      maximizeBtn.title = maximized ? 'Quitter la taille maximum' : 'Afficher en taille maximum';
+      setTooltip(
+        maximizeBtn,
+        maximized ? 'Quitter la taille maximum' : 'Afficher en taille maximum',
+      );
       const iconEl = maximizeBtn.querySelector('i');
       if (iconEl) {
         iconEl.className = `ph ${maximized ? 'ph-arrows-in-simple' : 'ph-arrows-out-simple'} cv-icon`;
@@ -990,7 +996,10 @@ export function mountWhiteboardCanvas({
     snapBtn.disabled = !editable;
     snapBtn.setAttribute('aria-pressed', String(snapToGrid));
     const centerType = activeTool === 'select' || activeTool === 'marquee' ? 'sticky' : activeTool;
-    addCenterBtn.title = `Ajouter (${TYPE_LABELS[centerType]}) au centre de la vue, sans glisser-déposer`;
+    setTooltip(
+      addCenterBtn,
+      `Ajouter (${TYPE_LABELS[centerType]}) au centre de la vue, sans glisser-déposer`,
+    );
     for (const [tool, btn] of toolButtons) {
       btn.setAttribute('aria-pressed', String(tool === activeTool));
     }

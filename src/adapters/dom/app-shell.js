@@ -3,11 +3,22 @@
 
 import { DEFAULT_TOAST_DURATION_SECONDS, normalizeToastDurationSeconds } from '../../core/model.js';
 import { wireCommandPalette } from './command-palette.js';
+import { hideAllTooltips, initTooltips, setTooltip } from './tooltip.js';
 
 const THEME_STORAGE_KEY = 'locavern-color-scheme';
 const TEXT_SIZE_STORAGE_KEY = 'locavern-text-size';
 
 let toastDurationMs = DEFAULT_TOAST_DURATION_SECONDS * 1000;
+
+const supportsMenuAnchorPos =
+  typeof CSS !== 'undefined' &&
+  typeof CSS.supports === 'function' &&
+  CSS.supports('position-area', 'block-end');
+
+const supportsPopoverSource =
+  typeof window !== 'undefined' &&
+  typeof window.ToggleEvent !== 'undefined' &&
+  'source' in window.ToggleEvent.prototype;
 
 /**
  * Configure the auto-dismiss delay (in seconds) for success and info toasts.
@@ -171,15 +182,109 @@ export function notify(opts) {
       : opts.status === 'danger' || opts.status === 'warning'
         ? 0
         : toastDurationMs;
-  return window.Covenant?.toast?.({ ...opts, timeout });
+  const toastEl = window.Covenant?.toast?.({ ...opts, timeout });
+  if (toastEl) {
+    const dismissBtn = toastEl.querySelector('[data-cv-dismiss]');
+    if (dismissBtn instanceof HTMLElement) {
+      dismissBtn.setAttribute('aria-label', 'Fermer la notification');
+      setTooltip(dismissBtn, 'Fermer la notification');
+    }
+  }
+  return toastEl;
 }
 
 /**
- * Initialize Covenant behaviours on a subtree.
+ * Position a `.cv-menu[popover]` relative to its invoker when CSS Anchor Positioning
+ * is unavailable, clamping to the viewport and flipping on overflow.
+ * @param {HTMLElement} menu
+ * @param {HTMLElement | null} invoker
+ */
+function positionMenuFallback(menu, invoker) {
+  if (!invoker) return;
+  const r = invoker.getBoundingClientRect();
+  const w = menu.offsetWidth;
+  const h = menu.offsetHeight;
+  const gap = 4;
+  const margin = 8;
+
+  let left = r.left;
+  if (left + w > window.innerWidth - margin && r.right - w >= margin) {
+    left = r.right - w;
+  }
+  left = Math.min(Math.max(margin, left), Math.max(margin, window.innerWidth - w - margin));
+
+  let top = r.bottom + gap;
+  if (top + h > window.innerHeight - margin && r.top - h - gap >= margin) {
+    top = r.top - h - gap;
+  }
+  top = Math.min(Math.max(margin, top), Math.max(margin, window.innerHeight - h - margin));
+
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+}
+
+/**
+ * Enhance Covenant popover menus:
+ * - Dismiss open tooltips when a menu opens.
+ * - Let CSS Anchor Positioning (`@supports (position-area: block-end)`) govern placement
+ *   when supported with implicit source by clearing inline `left`/`top` from `covenant.js`.
+ * - Keep JS fallback positioning synced on scroll/resize when unsupported.
+ * @param {ParentNode} [root]
+ */
+function enhanceMenus(root = document) {
+  root.querySelectorAll('.cv-menu[popover]').forEach((node) => {
+    if (!(node instanceof HTMLElement) || node.dataset.lcMenuEnhanced === '1') return;
+    node.dataset.lcMenuEnhanced = '1';
+
+    /** @type {(() => void) | null} */
+    let cleanupListeners = null;
+
+    node.addEventListener('toggle', (event) => {
+      const toggleEv = /** @type {ToggleEvent} */ (event);
+      const isOpen = toggleEv.newState === 'open';
+
+      if (!isOpen) {
+        cleanupListeners?.();
+        cleanupListeners = null;
+        return;
+      }
+
+      hideAllTooltips();
+
+      const invoker = node.id
+        ? document.querySelector(`[popovertarget="${CSS.escape(node.id)}"]`)
+        : null;
+      const invokerEl = invoker instanceof HTMLElement ? invoker : null;
+
+      if (supportsMenuAnchorPos && supportsPopoverSource) {
+        node.style.left = '';
+        node.style.top = '';
+        return;
+      }
+
+      positionMenuFallback(node, invokerEl);
+      const reposition = () => {
+        if (!node.isConnected || !node.matches(':popover-open')) return;
+        positionMenuFallback(node, invokerEl);
+      };
+      window.addEventListener('scroll', reposition, true);
+      window.addEventListener('resize', reposition);
+      cleanupListeners = () => {
+        window.removeEventListener('scroll', reposition, true);
+        window.removeEventListener('resize', reposition);
+      };
+    });
+  });
+}
+
+/**
+ * Initialize Covenant behaviours, enhanced menu positioning, and accessible tooltips on a subtree.
  * @param {ParentNode} [root]
  */
 export function initCovenant(root) {
   window.Covenant?.init?.(root);
+  enhanceMenus(root);
+  initTooltips(root);
 }
 
 /**
@@ -209,11 +314,16 @@ export function applyDialogPresentation(dialog, presentation) {
  * @param {string} id
  */
 export function openDialogById(id) {
+  hideAllTooltips();
   if (typeof window.Covenant?.openDialog === 'function') {
     window.Covenant.openDialog(id);
   } else {
     const dlg = /** @type {HTMLDialogElement | null} */ (document.getElementById(id));
     if (dlg && !dlg.open) dlg.showModal();
+  }
+  const dlg = document.getElementById(id);
+  if (dlg) {
+    initTooltips(dlg);
   }
 }
 
@@ -222,6 +332,7 @@ export function openDialogById(id) {
  * @param {string} id
  */
 export function closeDialogById(id) {
+  hideAllTooltips();
   if (typeof window.Covenant?.closeDialog === 'function') {
     window.Covenant.closeDialog(id);
   } else {

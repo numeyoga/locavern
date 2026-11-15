@@ -6,6 +6,7 @@ import {
   normalizeTaskStatuses,
 } from '../../core/model.js';
 import { closeDialogById, notify, openDialogById } from './app-shell.js';
+import { initTooltips, setTooltip } from './tooltip.js';
 
 /**
  * Open the Kanban statuses configuration modal (`#modal-statuses`).
@@ -143,6 +144,7 @@ export function wireStatusModal({ store }) {
       upBtn.disabled = readOnly || idx === 0;
       upBtn.dataset.moveUp = statusItem.id;
       upBtn.setAttribute('aria-label', `Monter le statut ${statusItem.label || String(idx + 1)}`);
+      setTooltip(upBtn, 'Monter le statut');
       const upIc = document.createElement('i');
       upIc.className = 'ph ph-arrow-up cv-icon';
       upIc.setAttribute('aria-hidden', 'true');
@@ -167,6 +169,7 @@ export function wireStatusModal({ store }) {
         'aria-label',
         `Descendre le statut ${statusItem.label || String(idx + 1)}`,
       );
+      setTooltip(downBtn, 'Descendre le statut');
       const downIc = document.createElement('i');
       downIc.className = 'ph ph-arrow-down cv-icon';
       downIc.setAttribute('aria-hidden', 'true');
@@ -191,6 +194,7 @@ export function wireStatusModal({ store }) {
         'aria-label',
         `Supprimer le statut ${statusItem.label || String(idx + 1)}`,
       );
+      setTooltip(delBtn, 'Supprimer le statut');
       const delIc = document.createElement('i');
       delIc.className = 'ph ph-trash cv-icon';
       delIc.setAttribute('aria-hidden', 'true');
@@ -284,6 +288,7 @@ export function wireStatusModal({ store }) {
 
     form.append(intro, listGroup, addField);
     modalBody.replaceChildren(form);
+    initTooltips(modalBody);
 
     // Footer buttons
     const resetBtn = document.createElement('button');

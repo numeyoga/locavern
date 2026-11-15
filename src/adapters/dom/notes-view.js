@@ -11,6 +11,7 @@ import {
 } from '../../core/store.js';
 import { instantiateNoteTemplate } from '../../core/templates.js';
 import { createTemplatePicker } from './template-picker.js';
+import { initTooltips } from './tooltip.js';
 import { saveArchiveBlob } from '../archive-file.js';
 import { mountRichTextEditor } from '../rich-text-tiptap.js';
 import { confirmAction, notify } from './app-shell.js';
@@ -618,6 +619,7 @@ export function renderNotesView({
 
     layout.append(listEl, editorCard);
     bodySlot.replaceChildren(layout);
+    initTooltips(bodySlot);
   }
 
   projectFilter.addEventListener('change', () => {

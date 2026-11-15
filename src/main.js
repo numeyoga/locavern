@@ -36,6 +36,7 @@ import {
   waitForWriteLock,
 } from './adapters/storage-idb.js';
 import { setupServiceWorkerUpdates } from './adapters/sw-update.js';
+import { hideAllTooltips, initTooltips } from './adapters/dom/tooltip.js';
 import {
   initCovenant,
   notify,
@@ -329,7 +330,7 @@ async function bootstrap() {
     });
   }
 
-  function renderCurrentView() {
+  function renderCurrentViewContent() {
     const state = store.getState();
     const activeView = state.preferences.activeView;
     syncNavigationChrome(activeView);
@@ -477,6 +478,12 @@ async function bootstrap() {
       onOpenNewProject: () => openProjectModal({ store }),
       onOpenTaskDrawer: handleOpenTaskDrawer,
     });
+  }
+
+  function renderCurrentView() {
+    hideAllTooltips();
+    renderCurrentViewContent();
+    initTooltips(rootView);
   }
 
   /** @type {() => void} */

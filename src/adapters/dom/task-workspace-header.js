@@ -1,6 +1,7 @@
 /** @import { AppCommand, AppState, StoreEffect, TaskDisplayMode } from '../../types.d.ts' */
 
 import { openStatusModal } from './status-modal.js';
+import { setTooltip } from './tooltip.js';
 
 /**
  * Render the shared header for Task views (project filter, List/Kanban switch, status config button, New Task CTA).
@@ -89,6 +90,7 @@ export function createTaskWorkspaceHeader({ state, dispatch, onOpenNewTask }) {
   statusIcon.className = 'ph ph-columns cv-icon';
   statusIcon.setAttribute('aria-hidden', 'true');
   statusBtn.append(statusIcon, document.createTextNode(' Statuts'));
+  setTooltip(statusBtn, 'Configurer les colonnes du Kanban');
   statusBtn.addEventListener('click', openStatusModal);
 
   const newBtn = document.createElement('button');

@@ -1,4 +1,5 @@
 import { normalizeTags, parseTagsInput } from '../../core/model.js';
+import { initTooltips, setTooltip } from './tooltip.js';
 
 /**
  * Create an accessible tag editor widget with removable chips, datalist autocomplete,
@@ -99,6 +100,7 @@ export function createTagEditor({
           removeBtn.type = 'button';
           removeBtn.className = 'lc-tag-chip__remove';
           removeBtn.setAttribute('aria-label', `Retirer l’étiquette ${tag}`);
+          setTooltip(removeBtn, 'Retirer l’étiquette');
           const ic = document.createElement('i');
           ic.className = 'ph ph-x cv-icon';
           ic.setAttribute('aria-hidden', 'true');
@@ -114,6 +116,7 @@ export function createTagEditor({
 
         chipsBox.append(chip);
       }
+      initTooltips(chipsBox);
     }
   }
 

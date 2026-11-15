@@ -4,6 +4,7 @@ import { diffIsoDays, formatFullDateFr, formatShortDateFr } from '../../core/dat
 import { getTaskRecurrenceLabel, getTaskStatusMeta } from '../../core/model.js';
 import { selectProjectById, selectTodaySummary } from '../../core/store.js';
 import { notify } from './app-shell.js';
+import { setTooltip } from './tooltip.js';
 
 /**
  * Create a Covenant KPI summary tile.
@@ -261,7 +262,7 @@ export function renderTodayView({
       doneBtn.type = 'button';
       doneBtn.className = 'cv-btn cv-btn--ghost cv-btn--icon cv-btn--sm';
       doneBtn.setAttribute('aria-label', `Marquer « ${task.title} » comme terminée`);
-      doneBtn.title = 'Marquer terminée';
+      setTooltip(doneBtn, 'Marquer terminée');
       const checkIc = document.createElement('i');
       checkIc.className = 'ph ph-check cv-icon';
       checkIc.setAttribute('aria-hidden', 'true');

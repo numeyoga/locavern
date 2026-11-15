@@ -2,6 +2,7 @@
 
 import { normalizeLocalRefs } from '../../core/model.js';
 import { selectEntityLinkEntries } from '../../core/store.js';
+import { initTooltips, setTooltip } from './tooltip.js';
 
 /** @type {Readonly<Record<LocalEntityKind, { icon: string; label: string }>>} */
 const KIND_META = {
@@ -111,6 +112,7 @@ export function createLinkEditor({
       removeBtn.type = 'button';
       removeBtn.className = 'lc-tag-chip__remove';
       removeBtn.setAttribute('aria-label', `Retirer le lien vers « ${entry.title} »`);
+      setTooltip(removeBtn, 'Retirer le lien');
       const xIc = document.createElement('i');
       xIc.className = 'ph ph-x cv-icon';
       xIc.setAttribute('aria-hidden', 'true');
@@ -191,6 +193,7 @@ export function createLinkEditor({
       }
     }
 
+    initTooltips(outgoingList);
     renderSelectOptions();
   }
 

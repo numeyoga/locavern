@@ -17,6 +17,7 @@ import { buildTasksIcsCalendar } from '../../core/ical.js';
 import { selectProjectById, selectTasks } from '../../core/store.js';
 import { saveArchiveBlob } from '../archive-file.js';
 import { notify } from './app-shell.js';
+import { initTooltips, setTooltip } from './tooltip.js';
 
 /** @type {Readonly<Record<TaskPriority, { label: string; badgeClass: string }>>} */
 const PRIORITY_META = {
@@ -479,6 +480,7 @@ export function renderCalendarView({
       minusBtn.className = 'cv-btn cv-btn--ghost cv-btn--sm lc-cal-shift-btn';
       minusBtn.setAttribute('aria-label', `Avancer « ${task.title} » d’un jour`);
       minusBtn.textContent = '−1 j';
+      setTooltip(minusBtn, 'Avancer d’un jour');
       minusBtn.addEventListener('click', () => moveTaskToDate(task.id, shiftIsoDate(dueDate, -1)));
 
       const plusBtn = document.createElement('button');
@@ -486,6 +488,7 @@ export function renderCalendarView({
       plusBtn.className = 'cv-btn cv-btn--ghost cv-btn--sm lc-cal-shift-btn';
       plusBtn.setAttribute('aria-label', `Reporter « ${task.title} » d’un jour`);
       plusBtn.textContent = '+1 j';
+      setTooltip(plusBtn, 'Reporter d’un jour');
       plusBtn.addEventListener('click', () => moveTaskToDate(task.id, shiftIsoDate(dueDate, 1)));
 
       shiftGroup.append(minusBtn, plusBtn);
@@ -580,10 +583,9 @@ export function renderCalendarView({
       const addDayBtn = document.createElement('button');
       addDayBtn.type = 'button';
       addDayBtn.className = 'cv-btn cv-btn--ghost cv-btn--icon cv-btn--sm lc-cal-cell__add';
-      addDayBtn.setAttribute(
-        'aria-label',
-        `Ajouter une tâche le ${formatShortDateFr(cellInfo.date, true)}`,
-      );
+      const addDayLabel = `Ajouter une tâche le ${formatShortDateFr(cellInfo.date, true)}`;
+      addDayBtn.setAttribute('aria-label', addDayLabel);
+      setTooltip(addDayBtn, addDayLabel);
       const addIc = document.createElement('i');
       addIc.className = 'ph ph-plus cv-icon';
       addIc.setAttribute('aria-hidden', 'true');
@@ -663,6 +665,7 @@ export function renderCalendarView({
   undatedSection.append(undatedHead, undatedList);
 
   container.replaceChildren(header, subBar, gridWrapper, undatedSection);
+  initTooltips(container);
 
   // Restore focus after keyboard rescheduling
   if (calendarState.focusTaskId) {
