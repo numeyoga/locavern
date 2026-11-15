@@ -1,7 +1,7 @@
 ---
 version: '0.2.0'
 cree_le: 2026-11-13
-mis_a_jour_le: 2026-11-14
+mis_a_jour_le: 2026-11-15
 ---
 
 # Créer votre premier espace de travail
@@ -77,11 +77,13 @@ Le statut en bas à gauche affiche `Enregistré localement`.
 2. Sous **État du stockage local**, vérifiez les compteurs : `1` projet, `1` tâche, `1` note et `1` tableau blanc.
 3. Sous **Exporter une archive**, cliquez sur **Exporter l’archive ZIP**.
 
-Une notification « Archive exportée » confirme l’opération et votre navigateur télécharge un fichier nommé `locavern-sauvegarde-AAAA-MM-JJ.zip`.
+Une notification « Archive exportée » confirme l’opération et votre navigateur enregistre un fichier nommé `locavern-sauvegarde-AAAA-MM-JJ.zip`.
 
 ## Pour aller plus loin
 
-- Pour gérer le tri, le glisser-déposer et l’archivage des projets : [Comment organiser vos projets et vos tâches](../how-to/organiser-projets-et-taches.md).
-- Pour mettre en forme vos notes et y insérer des images locales : [Comment rédiger des notes avec mise en forme et images locales](../how-to/rediger-notes-et-images.md).
-- Pour maîtriser les outils et l’export SVG/PNG du tableau blanc : [Comment utiliser le tableau blanc](../how-to/utiliser-le-tableau-blanc.md).
+- Pour gérer le tri, les filtres, le glisser-déposer et l’archivage des projets : [Comment organiser vos projets et vos tâches](../how-to/organiser-projets-et-taches.md).
+- Pour piloter vos échéances quotidiennes, le calendrier et les tâches récurrentes : [Comment planifier votre journée et votre calendrier](../how-to/planifier-journee-et-calendrier.md).
+- Pour classer par étiquettes transversales, relier des éléments et réutiliser des modèles : [Comment organiser votre travail avec étiquettes, liens et modèles](../how-to/organiser-avec-etiquettes-liens-et-modeles.md).
+- Pour mettre en forme vos notes, les exporter en Markdown et y insérer des images locales : [Comment rédiger des notes avec mise en forme et images locales](../how-to/rediger-notes-et-images.md).
+- Pour maîtriser les outils, l’aimantation et l’export SVG/PNG du tableau blanc : [Comment utiliser le tableau blanc](../how-to/utiliser-le-tableau-blanc.md).
 - Pour comprendre où sont conservées vos données : [Fonctionnement local, confidentialité et périmètre](../explanation/fonctionnement-local-et-confidentialite.md).

@@ -1,7 +1,7 @@
 ---
-version: '0.1.0'
+version: '0.2.0'
 cree_le: 2026-11-13
-mis_a_jour_le: 2026-11-13
+mis_a_jour_le: 2026-11-15
 ---
 
 # Comment reprendre l’édition en présence de plusieurs onglets
@@ -17,9 +17,9 @@ Locavern n’autorise l’écriture que dans un seul onglet à la fois afin d’
 
 Dans un onglet en lecture seule :
 
-- Vous pouvez consulter vos projets, filtrer et trier la liste des tâches, inspecter le tableau Kanban et lire vos notes.
-- Vous pouvez exporter une sauvegarde via **Sauvegarder** → **Exporter l’archive ZIP**.
-- La création, la modification, le déplacement, la suppression, l’import ZIP et la réinitialisation sont désactivés.
+- Vous pouvez consulter la vue **Aujourd’hui**, vos **Projets**, filtrer et trier **Tâches** (Liste et Kanban), parcourir le **Calendrier**, lire vos **Notes**, inspecter vos **Tableaux blancs** et consulter le contenu de la **Corbeille**.
+- Vous pouvez exporter vos données localement : sauvegarde ZIP (**Sauvegarder** → **Exporter l’archive ZIP**), agenda `.ics`, note Markdown `.md`, image `.svg` ou `.png`.
+- La création, la modification, le déplacement, la suppression, la restauration depuis la corbeille, l’import ZIP et la réinitialisation sont désactivés.
 
 ## Basculer l’édition vers l’onglet courant
 

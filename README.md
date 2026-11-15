@@ -1,12 +1,12 @@
 ---
 version: '0.2.0'
 cree_le: 2026-11-13
-mis_a_jour_le: 2026-11-14
+mis_a_jour_le: 2026-11-15
 ---
 
 # Locavern
 
-Locavern est une application web local-first de productivité personnelle (projets, tâches en vue liste et Kanban, notes enrichies, tableau blanc SVG interactif avec images locales, import/export manuel en archive ZIP), exécutée entièrement dans le navigateur sans backend ni requête vers des domaines tiers.
+Locavern est une application web local-first de productivité personnelle (tableau de bord quotidien, projets, tâches récurrentes en vues liste, Kanban et calendrier avec export `.ics`, notes enrichies avec export `.md`, tableau blanc SVG interactif, étiquettes, liens internes, modèles locaux, corbeille locale et archives ZIP claires ou chiffrées), exécutée entièrement dans le navigateur sans backend ni requête vers des domaines tiers.
 
 ## Sommaire
 
@@ -17,10 +17,11 @@ Locavern est une application web local-first de productivité personnelle (proje
 
 ## Périmètre fonctionnel
 
-- **Projets et tâches** : création, modification, archivage, vues Liste (`DataTable`) et Kanban (glisser-déposer natif, menu d’actions et raccourcis clavier `Alt` + flèches), tiroir de détail avec liste de contrôle et échéances.
-- **Notes enrichies** : éditeur Tiptap Core headless avec titres, listes, liens filtrés (`https://`, `mailto:`), listes de tâches et images locales stockées en `Blob` dans IndexedDB (blocage des images distantes).
-- **Tableau blanc SVG** : canevas SVG natif avec Post-it, rectangles, ellipses, flèches, texte, tracés libres et images locales, 5 couleurs sémantiques Covenant, historique Annuler/Rétablir, zoom/panoramique, édition et déplacement complets au clavier (WCAG 2.2 AA), blocage des images distantes et export autonome `.svg` et `.png`.
-- **Stockage et portabilité** : persistance IndexedDB (`idb`, schéma `v2` avec migration transparente depuis `v1`), protection multi-onglets par Web Locks (`navigator.locks`), export et restauration atomique d’archives ZIP (`manifest.json`, `data.json`, `assets/*`), mode hors ligne PWA via Service Worker et CSP stricte sans CDN.
+- **Planification et tâches** : vue **Aujourd’hui** (indicateurs, retards, complétion directe et éléments récents), **Projets** filtrables (`Tous` / `Actifs` / `Archivés`), **Tâches** en vue Liste (ajout rapide, badges d’urgence) et Kanban configurable (ajout rapide par colonne, glisser-déposer, menu Popover, clavier `Alt` + flèches, régularisation hors colonnes), récurrence (`Quotidienne`, `Hebdomadaire`, `Mensuelle`) et vue **Calendrier** (`Mois`/`Semaine`, report par glisser-déposer ou clavier, export `.ics`).
+- **Transversalité et recherche** : étiquettes multi-entités sur tâches et notes, liens internes bidirectionnels (`Éléments liés` / `Lié depuis :`) entre tâches, notes et tableaux blancs, modèles locaux intégrés et personnalisés (checklists, notes, tableaux blancs) et palette dynamique `Ctrl+K`.
+- **Notes enrichies** : éditeur Tiptap Core headless (`Titre 1` à `3`, gras, italique, barré, code, listes à cocher, liens `https://` et `mailto:`), duplication, export Markdown (`.md`) et images locales stockées en `Blob` dans `IndexedDB` (blocage des images distantes).
+- **Tableau blanc SVG** : canevas SVG natif avec sélection par zone, multi-sélection (`Maj+clic`, `Maj+Espace`, `Ctrl+A`), duplication (`Ctrl+D`), aimantation des flèches aux ancres des formes, grille `20 px` avec magnétisme, Post-it, rectangles, ellipses, flèches, texte, tracés libres et images locales, 5 couleurs sémantiques Covenant, historique Annuler/Rétablir, zoom / ajustement à la vue, manipulation complète au clavier (WCAG 2.2 AA) et export autonome `.svg` et `.png`.
+- **Corbeille, stockage et portabilité** : persistance `IndexedDB` (`idb`, `DB_VERSION = 4`), corbeille locale à rétention configurable (`1` à `365` jours) avec purge des images orphelines, protection multi-onglets par Web Locks (`navigator.locks`), export/import d’archives ZIP en clair ou chiffrées (`AES-256-GCM` + `PBKDF2-SHA-256`), fusion sans écrasement ou import sélectif par projets, enregistrement via `showSaveFilePicker`, mode hors ligne PWA avec bandeau de mise à jour Service Worker et CSP stricte sans CDN.
 
 ## Démarrage et scripts
 
@@ -47,7 +48,7 @@ Scripts vérifiés :
 - [Sommaire complet de la documentation](docs/index.md).
 - **Documentation utilisateur** :
   - [Tutoriel : créer votre premier espace de travail](docs/tutorials/premier-espace-de-travail.md).
-  - Guides pratiques : [projets et tâches](docs/how-to/organiser-projets-et-taches.md), [notes et images](docs/how-to/rediger-notes-et-images.md), [tableau blanc](docs/how-to/utiliser-le-tableau-blanc.md), [sauvegardes ZIP](docs/how-to/sauvegarder-et-restaurer.md), [installation hors ligne](docs/how-to/utiliser-locavern-hors-ligne.md), [mode lecture seule multi-onglets](docs/how-to/reprendre-edition-multi-onglets.md).
+  - Guides pratiques : [projets et tâches](docs/how-to/organiser-projets-et-taches.md), [journée et calendrier](docs/how-to/planifier-journee-et-calendrier.md), [étiquettes, liens et modèles](docs/how-to/organiser-avec-etiquettes-liens-et-modeles.md), [notes et images](docs/how-to/rediger-notes-et-images.md), [tableau blanc](docs/how-to/utiliser-le-tableau-blanc.md), [sauvegardes ZIP et corbeille](docs/how-to/sauvegarder-et-restaurer.md), [installation hors ligne](docs/how-to/utiliser-locavern-hors-ligne.md), [mode lecture seule multi-onglets](docs/how-to/reprendre-edition-multi-onglets.md).
   - Référence utilisateur : [interface, vues et raccourcis](docs/reference/interface-et-raccourcis.md), [stockage, format ZIP et erreurs](docs/reference/stockage-limites-et-erreurs.md).
   - Explication : [fonctionnement local, confidentialité et périmètre](docs/explanation/fonctionnement-local-et-confidentialite.md).
 - **Documentation technique** : [état du dépôt](docs/reference/etat-du-depot.md), [décisions et avancement](docs/reference/decisions-et-avancement.md), [choix d’architecture](docs/explanation/choix-architecture.md).
