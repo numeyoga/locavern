@@ -1,4 +1,6 @@
-/** @import { ActiveView, AllowedImageMimeType, ArrowEndpointBinding, ArrowSnapAnchor, ChecklistItem, LocalEntityKind, LocalRef, InputPresentation, InputPresentationMap, Note, Project, RichTextDoc, RichTextMark, RichTextNode, Task, TaskPriority, TaskRecurrence, TaskStatus, TaskStatusConfig, Whiteboard, WhiteboardColorToken, WhiteboardElement, WhiteboardElementType, WhiteboardViewport } from '../types.d.ts' */
+/** @import { ActiveView, AllowedImageMimeType, ArrowEndpointBinding, ArrowSnapAnchor, ChecklistItem, LocalEntityKind, LocalRef, InputPresentation, InputPresentationMap, Note, Project, RichTextDoc, RichTextMark, RichTextNode, Task, TaskPriority, TaskRecurrence, TaskStatus, TaskStatusConfig, TaskStatusRole, Whiteboard, WhiteboardColorToken, WhiteboardElement, WhiteboardElementType, WhiteboardViewport } from '../types.d.ts' */
+
+import { parseTimeHhMm } from './dates.js';
 
 /** @type {readonly import('../types.d.ts').InputPresentationScreen[]} */
 export const INPUT_PRESENTATION_SCREENS = Object.freeze([
@@ -16,6 +18,7 @@ export const ACTIVE_VIEWS = Object.freeze([
   'calendar',
   'notes',
   'whiteboards',
+  'archives',
 ]);
 
 /** @type {readonly InputPresentation[]} */
@@ -108,9 +111,9 @@ export function normalizeToastDurationSeconds(raw) {
 
 /** @type {readonly TaskStatusConfig[]} */
 export const DEFAULT_TASK_STATUSES = Object.freeze([
-  Object.freeze({ id: 'todo', label: 'À faire' }),
+  Object.freeze({ id: 'todo', label: 'À faire', isInitial: true }),
   Object.freeze({ id: 'in_progress', label: 'En cours' }),
-  Object.freeze({ id: 'done', label: 'Terminé' }),
+  Object.freeze({ id: 'done', label: 'Terminé', isTerminal: true }),
 ]);
 
 /** @type {readonly TaskStatus[]} */
@@ -129,6 +132,7 @@ const RESERVED_STATUS_IDS = new Set(['all', '__none__', '__unknown__']);
 /**
  * Normalize a configured list of Kanban task statuses.
  * Returns `DEFAULT_TASK_STATUSES` when `raw` is not an array; allows an empty array if explicitly configured.
+ * Enforces mutual exclusion between `isInitial` and `isTerminal` (terminal wins if both are set).
  * @param {unknown} raw
  * @returns {readonly TaskStatusConfig[]}
  */
@@ -147,9 +151,95 @@ export function normalizeTaskStatuses(raw) {
     const label = typeof candidate.label === 'string' ? candidate.label.trim().slice(0, 60) : '';
     if (!id || !label || RESERVED_STATUS_IDS.has(id) || seenIds.has(id)) continue;
     seenIds.add(id);
-    out.push(Object.freeze({ id, label }));
+    const isTerminal = candidate.isTerminal === true;
+    const isInitial = !isTerminal && candidate.isInitial === true;
+    out.push(
+      Object.freeze({
+        id,
+        label,
+        ...(isInitial ? { isInitial: true } : {}),
+        ...(isTerminal ? { isTerminal: true } : {}),
+      }),
+    );
   }
   return Object.freeze(out);
+}
+
+/**
+ * Upgrade legacy stored status configurations that had no explicit role metadata
+ * so built-in `todo` and `done` retain their initial and terminal roles.
+ * @param {readonly TaskStatusConfig[]} statuses
+ * @returns {readonly TaskStatusConfig[]}
+ */
+export function inferLegacyTaskStatusRoles(statuses) {
+  if (statuses.some((s) => s.isInitial === true || s.isTerminal === true)) {
+    return statuses;
+  }
+  return Object.freeze(
+    statuses.map((s) => {
+      if (s.id === 'done') return Object.freeze({ ...s, isTerminal: true });
+      if (s.id === 'todo') return Object.freeze({ ...s, isInitial: true });
+      return s;
+    }),
+  );
+}
+
+/**
+ * Return the semantic role ('initial' | 'terminal' | null) for a status ID.
+ * @param {TaskStatus | null | undefined} status
+ * @param {readonly TaskStatusConfig[]} [taskStatuses]
+ * @returns {TaskStatusRole | null}
+ */
+export function getTaskStatusRole(status, taskStatuses = DEFAULT_TASK_STATUSES) {
+  const clean = typeof status === 'string' ? status.trim() : '';
+  if (!clean) return null;
+  const entry = taskStatuses.find((s) => s.id === clean);
+  if (!entry) return null;
+  if (entry.isTerminal === true) return 'terminal';
+  if (entry.isInitial === true) return 'initial';
+  return null;
+}
+
+/**
+ * Return true if `status` is configured as an initial status.
+ * @param {TaskStatus | null | undefined} status
+ * @param {readonly TaskStatusConfig[]} [taskStatuses]
+ * @returns {boolean}
+ */
+export function isInitialTaskStatus(status, taskStatuses = DEFAULT_TASK_STATUSES) {
+  return getTaskStatusRole(status, taskStatuses) === 'initial';
+}
+
+/**
+ * Return true if `status` is configured as a terminal status.
+ * @param {TaskStatus | null | undefined} status
+ * @param {readonly TaskStatusConfig[]} [taskStatuses]
+ * @returns {boolean}
+ */
+export function isTerminalTaskStatus(status, taskStatuses = DEFAULT_TASK_STATUSES) {
+  return getTaskStatusRole(status, taskStatuses) === 'terminal';
+}
+
+/**
+ * Pick the default status ID for newly created or recurring tasks
+ * (prefers the first `isInitial` status, falling back to the first configured status).
+ * @param {readonly TaskStatusConfig[]} [taskStatuses]
+ * @returns {TaskStatus | null}
+ */
+export function getDefaultInitialTaskStatusId(taskStatuses = DEFAULT_TASK_STATUSES) {
+  const explicit = taskStatuses.find((s) => s.isInitial === true);
+  if (explicit) return explicit.id;
+  return taskStatuses[0]?.id ?? null;
+}
+
+/**
+ * Pick the default terminal status ID used by quick-complete actions
+ * (prefers the first `isTerminal` status, or null if none is configured).
+ * @param {readonly TaskStatusConfig[]} [taskStatuses]
+ * @returns {TaskStatus | null}
+ */
+export function getDefaultTerminalTaskStatusId(taskStatuses = DEFAULT_TASK_STATUSES) {
+  return taskStatuses.find((s) => s.isTerminal === true)?.id ?? null;
 }
 
 /**
@@ -196,9 +286,9 @@ export function getTaskStatusMeta(status, taskStatuses = DEFAULT_TASK_STATUSES) 
   if (index !== -1) {
     const entry = taskStatuses[index];
     let badgeClass = 'cv-badge cv-badge--info';
-    if (entry?.id === 'done') {
+    if (entry?.isTerminal === true || entry?.id === 'done') {
       badgeClass = 'cv-badge cv-badge--success';
-    } else if (entry?.id === 'todo' || index === 0) {
+    } else if (entry?.isInitial === true || entry?.id === 'todo' || index === 0) {
       badgeClass = 'cv-badge';
     }
     return {
@@ -504,6 +594,22 @@ export function normalizeDueDate(value) {
 }
 
 /**
+ * Normalize an optional wall-clock due time (HH:MM 24h format or null).
+ * @param {string | null | undefined} value
+ * @returns {string | null}
+ */
+export function normalizeDueTime(value) {
+  if (value == null) return null;
+  const trimmed = String(value).trim();
+  if (!trimmed) return null;
+  const parsed = parseTimeHhMm(trimmed);
+  if (!parsed) {
+    throw new Error('Heure d’échéance invalide. Utilisez le format HH:MM.');
+  }
+  return parsed.normalized;
+}
+
+/**
  * Normalize a checklist array.
  * @param {readonly ChecklistItem[] | undefined} items
  * @returns {readonly ChecklistItem[]}
@@ -636,11 +742,6 @@ export function stepWhiteboardElementLayer(elements, elementId, direction) {
   return { elements: Object.freeze(next), changed: true };
 }
 
-/**
- * Sanitize an arbitrary array of whiteboard elements, rejecting malformed or remote-image entries.
- * @param {unknown} rawElements
- * @returns {readonly WhiteboardElement[]}
- */
 /** @type {readonly ArrowSnapAnchor[]} */
 const ARROW_SNAP_ANCHORS = Object.freeze(['center', 'top', 'right', 'bottom', 'left']);
 
@@ -798,10 +899,17 @@ export function collectWhiteboardAssetIds(elements) {
 
 /**
  * Create a validated Project record.
- * @param {{ id: string; name: string; description?: string; archived?: boolean; now: string }} input
+ * @param {{ id: string; name: string; description?: string; archived?: boolean; archivedAt?: string | null; now: string }} input
  * @returns {Project}
  */
-export function createProject({ id, name, description = '', archived = false, now }) {
+export function createProject({
+  id,
+  name,
+  description = '',
+  archived = false,
+  archivedAt = null,
+  now,
+}) {
   const cleanId = id.trim();
   const cleanName = name.trim();
   if (!cleanId) {
@@ -813,11 +921,14 @@ export function createProject({ id, name, description = '', archived = false, no
   if (cleanName.length > 120) {
     throw new Error('Le nom du projet ne peut pas dépasser 120 caractères.');
   }
+  const isArchived = Boolean(archived);
+  const cleanArchivedAt = isArchived ? (archivedAt ?? now) : null;
   return Object.freeze({
     id: cleanId,
     name: cleanName,
     description: description.trim().slice(0, 1000),
-    archived: Boolean(archived),
+    archived: isArchived,
+    ...(cleanArchivedAt ? { archivedAt: cleanArchivedAt } : {}),
     createdAt: now,
     updatedAt: now,
   });
@@ -897,6 +1008,7 @@ export function parseTagsInput(rawText) {
  *   status?: TaskStatus | null;
  *   priority?: TaskPriority;
  *   dueDate?: string | null;
+ *   dueTime?: string | null;
  *   recurrence?: TaskRecurrence | null;
  *   position?: number;
  *   descriptionDoc?: RichTextDoc;
@@ -904,6 +1016,8 @@ export function parseTagsInput(rawText) {
  *   tags?: readonly string[];
  *   links?: readonly LocalRef[];
  *   assetIds?: readonly string[];
+ *   archived?: boolean;
+ *   archivedAt?: string | null;
  *   allowedStatuses?: readonly string[];
  *   now: string;
  * }} input
@@ -916,6 +1030,7 @@ export function createTask({
   status = 'todo',
   priority = 'medium',
   dueDate = null,
+  dueTime = null,
   recurrence = null,
   position = 0,
   descriptionDoc,
@@ -923,6 +1038,8 @@ export function createTask({
   tags = [],
   links = [],
   assetIds,
+  archived = false,
+  archivedAt = null,
   allowedStatuses = TASK_STATUSES,
   now,
 }) {
@@ -943,10 +1060,14 @@ export function createTask({
     throw new Error(`Priorité de tâche invalide : ${priority}.`);
   }
 
+  const cleanDueDate = normalizeDueDate(dueDate);
+  const cleanDueTime = cleanDueDate ? normalizeDueTime(dueTime) : null;
   const cleanRecurrence = normalizeTaskRecurrence(recurrence);
   const cleanDoc = sanitizeRichTextDoc(descriptionDoc);
   const derivedAssetIds = collectDocAssetIds(cleanDoc);
   const mergedAssets = [...new Set([...(assetIds ?? []), ...derivedAssetIds])];
+  const isArchived = Boolean(archived);
+  const cleanArchivedAt = isArchived ? (archivedAt ?? now) : null;
 
   return Object.freeze({
     id: cleanId,
@@ -954,7 +1075,8 @@ export function createTask({
     title: cleanTitle,
     status: cleanStatus,
     priority,
-    dueDate: normalizeDueDate(dueDate),
+    dueDate: cleanDueDate,
+    ...(cleanDueTime ? { dueTime: cleanDueTime } : {}),
     ...(cleanRecurrence ? { recurrence: cleanRecurrence } : {}),
     position: Number.isFinite(position) && position >= 0 ? Math.trunc(position) : 0,
     descriptionDoc: cleanDoc,
@@ -962,6 +1084,9 @@ export function createTask({
     tags: normalizeTags(tags),
     links: normalizeLocalRefs(links, { kind: 'task', id: cleanId }),
     assetIds: mergedAssets,
+    ...(isArchived
+      ? { archived: true, ...(cleanArchivedAt ? { archivedAt: cleanArchivedAt } : {}) }
+      : {}),
     createdAt: now,
     updatedAt: now,
   });
@@ -977,6 +1102,8 @@ export function createTask({
  *   tags?: readonly string[];
  *   links?: readonly LocalRef[];
  *   assetIds?: readonly string[];
+ *   archived?: boolean;
+ *   archivedAt?: string | null;
  *   now: string;
  * }} input
  * @returns {Note}
@@ -989,6 +1116,8 @@ export function createNote({
   tags = [],
   links = [],
   assetIds,
+  archived = false,
+  archivedAt = null,
   now,
 }) {
   const cleanId = id.trim();
@@ -1001,6 +1130,8 @@ export function createNote({
   const cleanDoc = sanitizeRichTextDoc(contentDoc);
   const derivedAssetIds = collectDocAssetIds(cleanDoc);
   const mergedAssets = [...new Set([...(assetIds ?? []), ...derivedAssetIds])];
+  const isArchived = Boolean(archived);
+  const cleanArchivedAt = isArchived ? (archivedAt ?? now) : null;
 
   return Object.freeze({
     id: cleanId,
@@ -1010,6 +1141,9 @@ export function createNote({
     tags: normalizeTags(tags),
     links: normalizeLocalRefs(links, { kind: 'note', id: cleanId }),
     assetIds: mergedAssets,
+    ...(isArchived
+      ? { archived: true, ...(cleanArchivedAt ? { archivedAt: cleanArchivedAt } : {}) }
+      : {}),
     createdAt: now,
     updatedAt: now,
   });
@@ -1025,6 +1159,8 @@ export function createNote({
  *   elements?: readonly WhiteboardElement[];
  *   links?: readonly LocalRef[];
  *   assetIds?: readonly string[];
+ *   archived?: boolean;
+ *   archivedAt?: string | null;
  *   now: string;
  * }} input
  * @returns {Whiteboard}
@@ -1037,6 +1173,8 @@ export function createWhiteboard({
   elements,
   links = [],
   assetIds,
+  archived = false,
+  archivedAt = null,
   now,
 }) {
   const cleanId = id.trim();
@@ -1053,6 +1191,8 @@ export function createWhiteboard({
     .filter((entry) => typeof entry === 'string' && entry.trim().length > 0)
     .map((entry) => entry.trim());
   const mergedAssets = [...new Set([...cleanProvidedAssets, ...derivedAssetIds])];
+  const isArchived = Boolean(archived);
+  const cleanArchivedAt = isArchived ? (archivedAt ?? now) : null;
 
   return Object.freeze({
     id: cleanId,
@@ -1062,6 +1202,9 @@ export function createWhiteboard({
     elements: cleanElements,
     links: normalizeLocalRefs(links, { kind: 'whiteboard', id: cleanId }),
     assetIds: mergedAssets,
+    ...(isArchived
+      ? { archived: true, ...(cleanArchivedAt ? { archivedAt: cleanArchivedAt } : {}) }
+      : {}),
     createdAt: now,
     updatedAt: now,
   });

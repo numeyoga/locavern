@@ -1,7 +1,12 @@
 /** @import { AppState, LocalEntityKind, LocalRef } from '../../types.d.ts' */
 
-import { normalizeLocalRefs } from '../../core/model.js';
-import { selectEntityLinkEntries } from '../../core/store.js';
+import { isTerminalTaskStatus, normalizeLocalRefs } from '../../core/model.js';
+import {
+  isNoteEffectivelyArchived,
+  isTaskEffectivelyArchived,
+  isWhiteboardEffectivelyArchived,
+  selectEntityLinkEntries,
+} from '../../core/store.js';
 import { initTooltips, setTooltip } from './tooltip.js';
 
 /** @type {Readonly<Record<LocalEntityKind, { icon: string; label: string }>>} */
@@ -14,7 +19,7 @@ const KIND_META = {
 /**
  * Create a local-reference linker component for Tasks, Notes, and Whiteboards.
  * Displays outgoing links (editable), incoming backlinks (read-only navigation),
- * and a grouped target selector.
+ * and a grouped target selector filtered against archived items and terminal tasks.
  *
  * @param {{
  *   idPrefix: string;
@@ -22,6 +27,7 @@ const KIND_META = {
  *   currentRef: LocalRef | null;
  *   initialLinks?: readonly LocalRef[];
  *   readOnly: boolean;
+ *   sourceTerminal?: boolean;
  *   onChange?: (links: readonly LocalRef[]) => void;
  *   onNavigate?: (ref: LocalRef) => void;
  * }} opts
@@ -29,6 +35,7 @@ const KIND_META = {
  *   element: HTMLElement;
  *   getLinks: () => readonly LocalRef[];
  *   setLinks: (nextLinks: readonly LocalRef[]) => void;
+ *   setSourceTerminal: (nextTerminal: boolean) => void;
  * }}
  */
 export function createLinkEditor({
@@ -37,11 +44,13 @@ export function createLinkEditor({
   currentRef,
   initialLinks = [],
   readOnly,
+  sourceTerminal = false,
   onChange,
   onNavigate,
 }) {
   /** @type {LocalRef[]} */
   let links = [...normalizeLocalRefs(initialLinks, currentRef)];
+  let terminalLocked = Boolean(sourceTerminal);
 
   const wrapper = document.createElement('div');
   wrapper.className = 'cv-field lc-links-field';
@@ -66,19 +75,34 @@ export function createLinkEditor({
   const select = document.createElement('select');
   select.id = `${idPrefix}-select`;
   select.className = 'cv-input';
-  select.disabled = readOnly;
+  select.disabled = readOnly || terminalLocked;
   select.setAttribute('aria-label', 'Sélectionner une tâche, note ou tableau blanc à lier');
 
   const addBtn = document.createElement('button');
   addBtn.type = 'button';
   addBtn.id = `${idPrefix}-add`;
   addBtn.className = 'cv-btn cv-btn--sm';
-  addBtn.disabled = readOnly;
+  addBtn.disabled = readOnly || terminalLocked;
   addBtn.textContent = 'Lier';
+
+  const terminalHint = document.createElement('p');
+  terminalHint.id = `${idPrefix}-terminal-hint`;
+  terminalHint.className = 'cv-hint';
+  terminalHint.style.margin = '0';
+  terminalHint.textContent =
+    'Statut terminal : il n’est plus possible d’ajouter de nouveaux liens à cette tâche.';
+  terminalHint.hidden = !terminalLocked;
 
   /**
    * Build a clickable link pill (and optional remove button).
-   * @param {{ kind: LocalEntityKind; id: string; title: string; projectName: string | null }} entry
+   * @param {{
+   *   kind: LocalEntityKind;
+   *   id: string;
+   *   title: string;
+   *   projectName: string | null;
+   *   archived?: boolean;
+   *   terminal?: boolean;
+   * }} entry
    * @param {boolean} removable
    * @returns {HTMLElement}
    */
@@ -106,6 +130,20 @@ export function createLinkEditor({
     });
 
     chip.append(openBtn);
+
+    if (entry.terminal) {
+      const termBadge = document.createElement('span');
+      termBadge.className = 'cv-badge cv-badge--success';
+      termBadge.textContent = 'Terminal';
+      chip.append(termBadge);
+    }
+
+    if (entry.archived) {
+      const archBadge = document.createElement('span');
+      archBadge.className = 'cv-badge';
+      archBadge.textContent = 'Archivé';
+      chip.append(archBadge);
+    }
 
     if (removable && !readOnly) {
       const removeBtn = document.createElement('button');
@@ -135,22 +173,39 @@ export function createLinkEditor({
     select.replaceChildren();
     const emptyOpt = document.createElement('option');
     emptyOpt.value = '';
-    emptyOpt.textContent = 'Choisir un élément à lier…';
+    emptyOpt.textContent = terminalLocked
+      ? 'Liaison bloquée (statut terminal)'
+      : 'Choisir un élément à lier…';
     select.append(emptyOpt);
 
+    const configuredStatuses = state.preferences.taskStatuses;
+    const activeTasks = state.tasks.filter(
+      (t) =>
+        !linkedKeys.has(`task:${t.id}`) &&
+        !isTaskEffectivelyArchived(t, state.projects) &&
+        !isTerminalTaskStatus(t.status, configuredStatuses),
+    );
+    const activeNotes = state.notes.filter(
+      (n) => !linkedKeys.has(`note:${n.id}`) && !isNoteEffectivelyArchived(n, state.projects),
+    );
+    const activeWhiteboards = state.whiteboards.filter(
+      (w) =>
+        !linkedKeys.has(`whiteboard:${w.id}`) &&
+        !isWhiteboardEffectivelyArchived(w, state.projects),
+    );
+
     const groups = /** @type {const} */ ([
-      ['Tâches', 'task', state.tasks],
-      ['Notes', 'note', state.notes],
-      ['Tableaux blancs', 'whiteboard', state.whiteboards],
+      ['Tâches', 'task', activeTasks],
+      ['Notes', 'note', activeNotes],
+      ['Tableaux blancs', 'whiteboard', activeWhiteboards],
     ]);
 
     let availableCount = 0;
     for (const [groupLabel, kind, items] of groups) {
-      const candidates = items.filter((it) => !linkedKeys.has(`${kind}:${it.id}`));
-      if (candidates.length === 0) continue;
+      if (items.length === 0) continue;
       const optgroup = document.createElement('optgroup');
       optgroup.label = groupLabel;
-      for (const it of candidates) {
+      for (const it of items) {
         const opt = document.createElement('option');
         opt.value = `${kind}:${it.id}`;
         opt.textContent = it.title;
@@ -160,8 +215,10 @@ export function createLinkEditor({
       select.append(optgroup);
     }
 
-    addBtn.disabled = readOnly || availableCount === 0;
-    select.disabled = readOnly || availableCount === 0;
+    const disableAdd = readOnly || terminalLocked || availableCount === 0;
+    addBtn.disabled = disableAdd;
+    select.disabled = disableAdd;
+    terminalHint.hidden = !terminalLocked;
   }
 
   function render() {
@@ -198,7 +255,7 @@ export function createLinkEditor({
   }
 
   addBtn.addEventListener('click', () => {
-    if (readOnly || !select.value) return;
+    if (readOnly || terminalLocked || !select.value) return;
     const colonIdx = select.value.indexOf(':');
     if (colonIdx === -1) return;
     const kind = /** @type {LocalEntityKind} */ (select.value.slice(0, colonIdx));
@@ -215,7 +272,7 @@ export function createLinkEditor({
   render();
 
   addRow.append(select, addBtn);
-  wrapper.append(label, outgoingList, backlinksWrap, addRow);
+  wrapper.append(label, outgoingList, backlinksWrap, addRow, terminalHint);
 
   return {
     element: wrapper,
@@ -225,6 +282,12 @@ export function createLinkEditor({
     setLinks(nextLinks) {
       links = [...normalizeLocalRefs(nextLinks, currentRef)];
       render();
+    },
+    setSourceTerminal(nextTerminal) {
+      const normalized = Boolean(nextTerminal);
+      if (normalized === terminalLocked) return;
+      terminalLocked = normalized;
+      renderSelectOptions();
     },
   };
 }

@@ -11,7 +11,12 @@ import {
   formatShortDateFr,
   getIsoWeekdayMon0,
   getWeekStartIsoDate,
+  isOffHoursDueTime,
+  isOffHoursHour,
+  isWeekendIsoDate,
+  isWeekendWeekdayIndex,
   parseIsoDate,
+  parseTimeHhMm,
   shiftIsoDate,
 } from '../../src/core/dates.js';
 
@@ -82,5 +87,44 @@ describe('dates', () => {
     expect(classifyDueDateUrgency('2026-11-10', '2026-11-15', 'done')).toBeNull();
     expect(classifyDueDateUrgency(null, '2026-11-15', 'todo')).toBeNull();
     expect(formatFullDateFr('2026-11-15')).toBe('Dimanche 15 novembre 2026');
+  });
+
+  it('valide les heures HH:MM, identifie le week-end (Sam/Dim) et le créneau 18h–7h', () => {
+    expect(parseTimeHhMm('07:00')).toEqual({ hour: 7, minute: 0, normalized: '07:00' });
+    expect(parseTimeHhMm('23:59')).toEqual({ hour: 23, minute: 59, normalized: '23:59' });
+    expect(parseTimeHhMm('24:00')).toBeNull();
+    expect(parseTimeHhMm('12:60')).toBeNull();
+    expect(parseTimeHhMm(null)).toBeNull();
+
+    // Créneau 18h–7h : 18:00..23:59 et 00:00..06:59
+    expect(isOffHoursHour(0)).toBe(true);
+    expect(isOffHoursHour(6)).toBe(true);
+    expect(isOffHoursHour(7)).toBe(false);
+    expect(isOffHoursHour(17)).toBe(false);
+    expect(isOffHoursHour(18)).toBe(true);
+    expect(isOffHoursHour(23)).toBe(true);
+    expect(isOffHoursDueTime('06:59')).toBe(true);
+    expect(isOffHoursDueTime('07:00')).toBe(false);
+    expect(isOffHoursDueTime('17:59')).toBe(false);
+    expect(isOffHoursDueTime('18:00')).toBe(true);
+    expect(isOffHoursDueTime(null)).toBe(false);
+
+    // Week-end (Samedi=5, Dimanche=6)
+    expect(isWeekendWeekdayIndex(4)).toBe(false);
+    expect(isWeekendWeekdayIndex(5)).toBe(true);
+    expect(isWeekendWeekdayIndex(6)).toBe(true);
+    expect(isWeekendIsoDate('2026-11-13')).toBe(false); // Vendredi
+    expect(isWeekendIsoDate('2026-11-14')).toBe(true); // Samedi
+    expect(isWeekendIsoDate('2026-11-15')).toBe(true); // Dimanche
+
+    const week = buildWeekCalendarGrid('2026-11-15');
+    expect(week.map((c) => c.isWeekend)).toEqual([false, false, false, false, false, true, true]);
+    const novGrid = buildMonthCalendarGrid(2026, 11);
+    expect(novGrid[5]?.isWeekend).toBe(true); // Samedi 31 oct
+    expect(novGrid[6]?.isWeekend).toBe(true); // Dimanche 1 nov
+    expect(novGrid[7]?.isWeekend).toBe(false); // Lundi 2 nov
+
+    // Statut terminal personnalisé supprime la classification d’urgence
+    expect(classifyDueDateUrgency('2026-11-10', '2026-11-15', 'validated', true)).toBeNull();
   });
 });

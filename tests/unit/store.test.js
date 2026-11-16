@@ -5,7 +5,9 @@ import {
   createStore,
   reduce,
   selectAllTags,
+  selectArchivedEntries,
   selectEntityLinkEntries,
+  selectProjects,
   selectKanbanColumns,
   selectUnmappedKanbanTasks,
   selectNotes,
@@ -973,5 +975,153 @@ describe('store', () => {
     });
     expect(roRes.effects).toEqual([]);
     expect(store.getState().tasks).toHaveLength(countBefore);
+  });
+
+  it('interdit les nouveaux liens impliquant un statut terminal mais laisse consulter/supprimer les liens existants', () => {
+    const store = createStore(createInitialState());
+    store.dispatch({ type: 'create_project', id: 'p1', name: 'P1', now: T1 });
+    store.dispatch({ type: 'create_note', id: 'n1', projectId: 'p1', title: 'Note A', now: T1 });
+    store.dispatch({
+      type: 'create_task',
+      id: 't-active',
+      projectId: 'p1',
+      title: 'Tâche active',
+      status: 'todo',
+      now: T1,
+    });
+    store.dispatch({
+      type: 'create_task',
+      id: 't-term',
+      projectId: 'p1',
+      title: 'Tâche terminale',
+      status: 'todo',
+      links: [{ kind: 'note', id: 'n1' }],
+      now: T1,
+    });
+
+    // Passage en statut terminal conserve les liens existants
+    store.dispatch({
+      type: 'update_task',
+      id: 't-term',
+      patch: { status: 'done' },
+      now: T2,
+    });
+    expect(store.getState().tasks.find((t) => t.id === 't-term')?.links).toEqual([
+      { kind: 'note', id: 'n1' },
+    ]);
+
+    // Retirer un lien existant sur une tâche terminale reste autorisé
+    store.dispatch({
+      type: 'update_task',
+      id: 't-term',
+      patch: { links: [] },
+      now: T2,
+    });
+    expect(store.getState().tasks.find((t) => t.id === 't-term')?.links).toEqual([]);
+
+    // Ajouter un nouveau lien depuis la tâche terminale échoue
+    expect(() =>
+      store.dispatch({
+        type: 'update_task',
+        id: 't-term',
+        patch: { links: [{ kind: 'note', id: 'n1' }] },
+        now: T2,
+      }),
+    ).toThrow(/terminal/i);
+
+    // Lier une note ou une tâche vers une tâche terminale échoue
+    expect(() =>
+      store.dispatch({
+        type: 'update_note',
+        id: 'n1',
+        patch: { links: [{ kind: 'task', id: 't-term' }] },
+        now: T2,
+      }),
+    ).toThrow(/terminal/i);
+    expect(() =>
+      store.dispatch({
+        type: 'update_task',
+        id: 't-active',
+        patch: { links: [{ kind: 'task', id: 't-term' }] },
+        now: T2,
+      }),
+    ).toThrow(/terminal/i);
+  });
+
+  it('archive et désarchive projets, tâches, notes et tableaux blancs et les isole dans selectArchivedEntries', () => {
+    const store = createStore(createInitialState());
+    store.dispatch({ type: 'create_project', id: 'p1', name: 'Alpha', now: T1 });
+    store.dispatch({ type: 'create_project', id: 'p2', name: 'Beta', now: T1 });
+    store.dispatch({
+      type: 'create_task',
+      id: 't1',
+      projectId: 'p1',
+      title: 'Tâche Alpha',
+      dueDate: '2026-11-20',
+      dueTime: '19:30',
+      tags: ['focus'],
+      now: T1,
+    });
+    store.dispatch({
+      type: 'create_note',
+      id: 'n1',
+      projectId: 'p2',
+      title: 'Note Beta',
+      tags: ['spec'],
+      now: T1,
+    });
+    store.dispatch({
+      type: 'create_whiteboard',
+      id: 'w1',
+      projectId: 'p1',
+      title: 'WB Alpha',
+      now: T1,
+    });
+
+    // Archiver une note et un tableau blanc individuellement
+    store.dispatch({ type: 'toggle_archive_note', id: 'n1', archived: true, now: T2 });
+    store.dispatch({ type: 'toggle_archive_whiteboard', id: 'w1', archived: true, now: T2 });
+    expect(selectNotes(store.getState(), { projectId: 'all' })).toEqual([]);
+    expect(selectWhiteboards(store.getState(), { projectId: 'all' })).toEqual([]);
+
+    // Archiver le projet p1 masque aussi t1 des sélecteurs habituels
+    store.dispatch({ type: 'toggle_archive_project', id: 'p1', archived: true, now: T2 });
+    expect(selectProjects(store.getState()).map((p) => p.id)).toEqual(['p2']);
+    expect(selectTasks(store.getState(), {})).toEqual([]);
+    expect(selectTodaySummary(store.getState(), '2026-11-20').dueTodayTasks).toEqual([]);
+
+    // Lier vers une entité archivée est refusé
+    expect(() =>
+      store.dispatch({
+        type: 'create_task',
+        id: 't-bad-link',
+        projectId: 'p2',
+        title: 'Lien interdit',
+        links: [{ kind: 'note', id: 'n1' }],
+        now: T2,
+      }),
+    ).toThrow(/archivé/i);
+
+    // selectArchivedEntries expose tous les éléments archivés avec filtres
+    const allArchived = selectArchivedEntries(store.getState(), {});
+    expect(allArchived.map((e) => `${e.kind}:${e.id}`).sort()).toEqual([
+      'note:n1',
+      'project:p1',
+      'task:t1',
+      'whiteboard:w1',
+    ]);
+    expect(selectArchivedEntries(store.getState(), { kind: 'note' }).map((e) => e.id)).toEqual([
+      'n1',
+    ]);
+    expect(selectArchivedEntries(store.getState(), { tag: 'focus' }).map((e) => e.id)).toEqual([
+      't1',
+    ]);
+    expect(selectArchivedEntries(store.getState(), { projectId: 'p1' })).toHaveLength(3);
+
+    // Désarchiver t1 réactive automatiquement son projet parent p1, mais w1 explicitement archivé reste archivé
+    store.dispatch({ type: 'toggle_archive_task', id: 't1', archived: false, now: T2 });
+    expect(selectProjects(store.getState()).map((p) => p.id)).toEqual(['p1', 'p2']);
+    expect(selectTasks(store.getState(), {}).map((t) => t.id)).toEqual(['t1']);
+    expect(selectWhiteboards(store.getState(), { projectId: 'all' })).toEqual([]);
   });
 });

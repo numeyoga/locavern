@@ -1,10 +1,17 @@
 /** @import { AppCommand, AppState, StoreEffect, Task, TaskDueFilter, TaskPriority, TaskStatus } from '../../types.d.ts' */
-import { classifyDueDateUrgency, getTodayIsoDate } from '../../core/dates.js';
-import { getTaskRecurrenceLabel, getTaskStatusMeta } from '../../core/model.js';
+import { classifyDueDateUrgency, getTodayIsoDate, isOffHoursDueTime } from '../../core/dates.js';
+import {
+  getDefaultInitialTaskStatusId,
+  getTaskRecurrenceLabel,
+  getTaskStatusMeta,
+  getTaskStatusRole,
+  isTerminalTaskStatus,
+} from '../../core/model.js';
 import {
   selectAllTags,
   selectKanbanColumns,
   selectProjectById,
+  selectProjects,
   selectUnmappedKanbanTasks,
 } from '../../core/store.js';
 import { confirmAction, initCovenant, notify } from './app-shell.js';
@@ -45,7 +52,8 @@ export function renderKanbanView({
   onOpenTaskDrawer,
 }) {
   const state = store.getState();
-  const initialDefaultStatus = state.preferences.taskStatuses[0]?.id ?? null;
+  const activeProjects = selectProjects(state);
+  const initialDefaultStatus = getDefaultInitialTaskStatusId(state.preferences.taskStatuses);
 
   const header = createTaskWorkspaceHeader({
     state,
@@ -53,7 +61,7 @@ export function renderKanbanView({
     onOpenNewTask: () => onOpenTaskDrawer(undefined, initialDefaultStatus),
   });
 
-  if (state.projects.length === 0) {
+  if (activeProjects.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'cv-empty';
     const iconBox = document.createElement('span');
@@ -64,10 +72,13 @@ export function renderKanbanView({
     iconBox.append(ic);
     const title = document.createElement('p');
     title.className = 'cv-empty__title';
-    title.textContent = 'Créez un premier projet pour commencer';
+    title.textContent =
+      state.projects.length === 0
+        ? 'Créez un premier projet pour commencer'
+        : 'Aucun projet actif pour le moment';
     const desc = document.createElement('p');
     desc.textContent =
-      'Le tableau Kanban organise les tâches de vos projets par colonnes de statut.';
+      'Le tableau Kanban organise les tâches de vos projets actifs par colonnes de statut.';
     const cta = document.createElement('button');
     cta.type = 'button';
     cta.className = 'cv-btn cv-btn--primary';
@@ -385,18 +396,40 @@ export function renderKanbanView({
 
     for (const colMeta of configuredStatuses) {
       const colTasks = columnsData[colMeta.id] ?? [];
+      const colRole = getTaskStatusRole(colMeta.id, configuredStatuses);
       const colEl = document.createElement('section');
       colEl.className = 'lc-kanban__col';
       colEl.dataset.kanbanStatus = colMeta.id;
+      if (colRole) {
+        colEl.dataset.statusRole = colRole;
+      }
       colEl.setAttribute('aria-labelledby', `kanban-col-${colMeta.id}`);
 
       const colHead = document.createElement('div');
       colHead.className = 'lc-kanban__col-header';
 
+      const colTitleGroup = document.createElement('div');
+      colTitleGroup.className = 'lc-kanban__col-title-group';
+
       const colTitle = document.createElement('h2');
       colTitle.id = `kanban-col-${colMeta.id}`;
       colTitle.className = 'lc-kanban__col-title';
       colTitle.textContent = colMeta.label;
+      colTitleGroup.append(colTitle);
+
+      if (colRole === 'initial') {
+        const roleBadge = document.createElement('span');
+        roleBadge.className = 'cv-badge cv-badge--accent';
+        roleBadge.dataset.statusRole = 'initial';
+        roleBadge.textContent = 'Initial';
+        colTitleGroup.append(roleBadge);
+      } else if (colRole === 'terminal') {
+        const roleBadge = document.createElement('span');
+        roleBadge.className = 'cv-badge cv-badge--success';
+        roleBadge.dataset.statusRole = 'terminal';
+        roleBadge.textContent = 'Terminal';
+        colTitleGroup.append(roleBadge);
+      }
 
       const colControls = document.createElement('div');
       colControls.className = 'lc-table-actions';
@@ -417,7 +450,7 @@ export function renderKanbanView({
       quickAddBtn.addEventListener('click', () => onOpenTaskDrawer(undefined, colMeta.id));
 
       colControls.append(countBadge, quickAddBtn);
-      colHead.append(colTitle, colControls);
+      colHead.append(colTitleGroup, colControls);
 
       const colQuickForm = document.createElement('form');
       colQuickForm.className = 'lc-kanban__quick-add';
@@ -463,8 +496,7 @@ export function renderKanbanView({
           return;
         }
         const targetProjectId =
-          latestState.preferences.selectedProjectId ??
-          (latestState.projects.find((p) => !p.archived) ?? latestState.projects[0])?.id;
+          latestState.preferences.selectedProjectId ?? selectProjects(latestState)[0]?.id;
         if (!targetProjectId) return;
         const defaultPriority = filters.priority !== 'all' ? filters.priority : 'medium';
 
@@ -701,6 +733,16 @@ export function renderKanbanView({
           sep2.className = 'cv-menu__sep';
           menu.append(sep2);
 
+          addMenuItem('Archiver', () => {
+            store.dispatch({
+              type: 'toggle_archive_task',
+              id: task.id,
+              archived: true,
+              now: new Date().toISOString(),
+            });
+            notify({ status: 'info', title: 'Tâche archivée', text: task.title });
+          });
+
           addMenuItem(
             'Supprimer',
             async () => {
@@ -736,7 +778,12 @@ export function renderKanbanView({
         prioBadge.append(prioDot, document.createTextNode(prioInfo.label));
         metaRow.append(prioBadge);
 
-        const urgency = classifyDueDateUrgency(task.dueDate, todayIso, task.status);
+        const urgency = classifyDueDateUrgency(
+          task.dueDate,
+          todayIso,
+          task.status,
+          isTerminalTaskStatus(task.status, configuredStatuses),
+        );
         if (urgency === 'overdue' || urgency === 'today' || urgency === 'this_week') {
           card.dataset.dueUrgency = urgency;
           card.classList.add(`lc-kanban__card--${urgency}`);
@@ -754,8 +801,18 @@ export function renderKanbanView({
         if (task.dueDate) {
           const dueTag = document.createElement('span');
           dueTag.className = 'cv-tag cv-tag--mono';
-          dueTag.textContent = task.dueDate;
+          dueTag.textContent = task.dueTime ? `${task.dueDate} · ${task.dueTime}` : task.dueDate;
           metaRow.append(dueTag);
+          if (isOffHoursDueTime(task.dueTime)) {
+            const nightBadge = document.createElement('span');
+            nightBadge.className = 'cv-badge cv-badge--info lc-offhours-pill';
+            nightBadge.dataset.offhours = 'true';
+            const nIc = document.createElement('i');
+            nIc.className = 'ph ph-moon cv-icon';
+            nIc.setAttribute('aria-hidden', 'true');
+            nightBadge.append(nIc, document.createTextNode(' 18h–7h'));
+            metaRow.append(nightBadge);
+          }
         }
 
         if (task.recurrence) {

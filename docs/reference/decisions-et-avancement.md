@@ -1,12 +1,12 @@
 ---
 version: '0.2.0'
 cree_le: 2026-11-13
-mis_a_jour_le: 2026-11-15
+mis_a_jour_le: 2026-11-16
 ---
 
 # Décisions et avancement
 
-Registre issu de la [restitution du 12 novembre 2026](../../choix-technique.md) et des arbitrages d’architecture du 13 novembre 2026, mis à jour le 15 novembre 2026 après livraison du Lot 2 (`0.2.0`), du pipeline GitHub Pages et des 23 évolutions fonctionnelles, et confronté à l’[état local du dépôt](etat-du-depot.md).
+Registre issu de la [restitution du 12 novembre 2026](../../choix-technique.md) et des arbitrages d’architecture du 13 novembre 2026, mis à jour le 16 novembre 2026 après livraison du Lot 2 (`0.2.0`), du pipeline GitHub Pages et des évolutions fonctionnelles (agenda différencié week-end / `18h–7h` / horaire, statuts initiaux/terminaux et archivage transversal), et confronté à l’[état local du dépôt](etat-du-depot.md).
 
 ## Sommaire
 
@@ -41,8 +41,8 @@ Registre issu de la [restitution du 12 novembre 2026](../../choix-technique.md) 
 | Usage                  | Productivité personnelle local-first inspirée fonctionnellement de Nanoboard                                                       | Vérifié |
 | Premier lot (MVP)      | Socle, stockage local, projets et tâches (vues liste et Kanban), notes enrichies, import/export ZIP                                | Vérifié |
 | Deuxième lot           | Tableau blanc SVG natif accessible (`0.2.0`, `schemaVersion: 2`)                                                                   | Vérifié |
-| Planification          | Vue `Aujourd’hui`, vue `Calendrier` (`Mois`/`Semaine`, D&D et clavier), récurrence de tâches et export `.ics`                      | Vérifié |
-| Transversalité         | Étiquettes multi-entités, liens internes bidirectionnels, modèles locaux intégrés et personnalisés, palette `Ctrl+K`               | Vérifié |
+| Planification          | Vue `Aujourd’hui`, vue `Calendrier` (`Mois`/`Semaine`, week-end, `18h–7h`, grille horaire, D&D et clavier), récurrence, `.ics`     | Vérifié |
+| Transversalité         | Étiquettes multi-entités, liens internes (avec protection sur statut terminal), archivage complet (`Archives`), modèles, `Ctrl+K`  | Vérifié |
 | Contenu                | Descriptions enrichies, liens, listes de contrôle, schémas vectoriels, images locales                                              | Vérifié |
 | Expérience             | Import/export ZIP (clair ou chiffré, fusion/sélectif/remplacement), mode sombre, PWA hors ligne, export `.md`/`.ics`/`.svg`/`.png` | Vérifié |
 | Exécution              | Local first, sans backend distant ni serveur applicatif requis au runtime                                                          | Vérifié |
@@ -60,11 +60,11 @@ Registre issu de la [restitution du 12 novembre 2026](../../choix-technique.md) 
 - Socle en **JavaScript récent natif (`.js`, ES Modules)**, sans transpilation du code applicatif, avec vérification statique des types via **JSDoc + fichiers de déclaration `.d.ts`** (`tsc -p jsconfig.json`) et bundling des dépendances locales via Vite.
 - Store d’état immuable et adaptateurs DOM exploitant les API modernes des navigateurs récents (`<dialog>`, Popover API, Pointer Events, Web Crypto, File System Access API).
 - Stockage local `IndexedDB` (`DB_VERSION = 4`) via `idb` avec corbeille locale à rétention configurable (`1` à `365` jours), ramasse-miettes des images orphelines et demande de persistance (`navigator.storage.persist()`).
-- Tableau de bord quotidien **Aujourd’hui** (indicateurs, retards, échéances à 7 jours, priorités hautes, complétion directe, éléments récents) et vue **Calendrier** (`Mois`/`Semaine`, glisser-déposer, `−1 j` / `+1 j`, raccourcis `Alt`/`Maj` + flèches, panneau `Sans échéance` et export `.ics` RFC 5545).
-- Gestion des projets (filtre `Tous` / `Actifs` / `Archivés`) et des tâches (ajout rapide Liste et Kanban, vues Liste et Kanban accessible au clavier et à la souris, colonnes Kanban paramétrables, récurrence quotidienne/hebdomadaire/mensuelle, recherche multi-mots insensible aux accents).
+- Tableau de bord quotidien **Aujourd’hui** (indicateurs, retards, échéances à 7 jours, priorités hautes, complétion directe, éléments récents) et vue **Calendrier** (`Mois`/`Semaine`, distinction week-end vs créneau `18h–7h`, créneaux horaires `00:00`–`23:00` + `Sans heure`, glisser-déposer, `−1 j` / `+1 j`, raccourcis `Alt`/`Maj` + flèches, panneau `Sans échéance` et export `.ics` RFC 5545).
+- Gestion des projets, tâches (ajout rapide Liste et Kanban, vues Liste et Kanban accessibles, statuts paramétrables avec rôles `Initial`/`Terminal` et blocage de nouveaux liens sur statut terminal, récurrence, recherche multi-mots) et **archivage transversal** sur projets, tâches, notes et tableaux blancs avec vue **Archives** filtrable et réactivation parente automatique.
 - Transversalité : étiquettes sur tâches et notes, liens internes bidirectionnels (`Éléments liés` / `Lié depuis :`) entre tâches, notes et tableaux blancs avec nettoyage à la purge, modèles locaux intégrés et personnalisés (checklists, notes, tableaux blancs) et recherche globale dans la palette `Ctrl+K`.
-- Notes autonomes et descriptions de tâches avec Tiptap Core headless (`h1` à `h3`), images locales en `Blob`, duplication et export `.md`.
-- Tableaux blancs autonomes sur canevas SVG natif (`src/adapters/whiteboard-canvas.js`), avec sélection multiple par zone / `Maj+clic` / `Ctrl+A`, duplication `Ctrl+D`, aimantation des flèches, grille `20 px` avec magnétisme, ajustement à la vue, images locales, navigation clavier complète et export `.svg` / `.png`.
+- Notes autonomes et descriptions de tâches avec Tiptap Core headless (`h1` à `h3`), images locales en `Blob`, duplication, archivage et export `.md`.
+- Tableaux blancs autonomes sur canevas SVG natif (`src/adapters/whiteboard-canvas.js`), avec sélection multiple par zone / `Maj+clic` / `Ctrl+A`, duplication `Ctrl+D`, aimantation des flèches, grille `20 px` avec magnétisme, ajustement à la vue, images locales, navigation clavier complète, archivage, modèles de canevas et export `.svg` / `.png`.
 - Visuel de saisie (`Tiroir latéral` ou `Modale`) configurable par écran, durée configurable des notifications (`1` à `60 s`) et délai de corbeille dans `Préférences d’affichage`.
 - Sauvegarde et restauration par archive ZIP (`fflate`, `schemaVersion: 2`) en clair ou chiffrée (`AES-256-GCM` + `PBKDF2-SHA-256`), fusion sans écrasement, import sélectif par projets, remplacement complet, enregistrement via `showSaveFilePicker` et suivi d’ancienneté de la dernière sauvegarde.
 - Notification explicite de mise à jour Service Worker prête hors ligne (`Recharger` / `Plus tard`).
@@ -138,7 +138,7 @@ Registre issu de la [restitution du 12 novembre 2026](../../choix-technique.md) 
 - CSS natif sans framework CSS externe.
 - Intégration locale des fichiers du **Covenant Design System** (`public/vendor/covenant/`, sans import Google Fonts) et styles applicatifs basés exclusivement sur les tokens `--cv-*` (`src/styles/app.css`).
 - Tokens sémantiques en propriétés personnalisées CSS (thèmes clair et sombre natifs avec `color-scheme` et script anti-flash `public/theme-init.js`).
-- Composants HTML5 sémantiques (`<dialog>`, `[popover]`, formulaires accessibles, états vides et d’erreur explicites), conformité WCAG 2.2 AA vérifiée en clair et sombre via `@axe-core/playwright` (`dark-mode-contrast.spec.js`).
+- Composants HTML5 sémantiques (`<dialog>`, `[popover]`, formulaires accessibles, états vides et d’erreur explicites), conformité WCAG 2.2 AA vérifiée en clair et sombre via `@axe-core/playwright` (`dark-mode-contrast.spec.js`, `calendar.spec.js`, `statuses-archives.spec.js`).
 - Formatage avec Prettier.
 
 ## Tableau blanc
@@ -154,8 +154,8 @@ Registre issu de la [restitution du 12 novembre 2026](../../choix-technique.md) 
 **Vérifié :**
 
 - Vérification statique stricte des types sur les fichiers `.js` (`tsc -p jsconfig.json`).
-- `74` tests unitaires Vitest (`13` fichiers) sur le cœur fonctionnel pur, les archives et la détection de mise à jour Service Worker (`tests/unit/`).
-- `30` scénarios de bout en bout (`17` fichiers) Playwright avec contrôles d’accessibilité `@axe-core/playwright` (`tests/e2e/`).
+- `89` tests unitaires Vitest (`14` fichiers) sur le cœur fonctionnel pur, les archives, l’export de dossier et la détection de mise à jour Service Worker (`tests/unit/`).
+- `39` scénarios de bout en bout (`21` fichiers) Playwright avec contrôles d’accessibilité `@axe-core/playwright` (`tests/e2e/`).
 - Documentation française organisée selon Diátaxis (`README.md`, `docs/`), alignée sur la version `0.2.0` et les évolutions livrées.
 
 ## Distribution

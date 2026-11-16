@@ -1,8 +1,12 @@
 export type TaskStatus = string;
 
+export type TaskStatusRole = 'initial' | 'terminal';
+
 export interface TaskStatusConfig {
   readonly id: TaskStatus;
   readonly label: string;
+  readonly isInitial?: boolean;
+  readonly isTerminal?: boolean;
 }
 
 export type TaskStatusFilter = TaskStatus | 'all' | '__none__' | '__unknown__';
@@ -56,7 +60,7 @@ export type AllowedImageMimeType = 'image/png' | 'image/jpeg' | 'image/webp' | '
 
 export type InputPresentationScreen = 'tasks' | 'projects' | 'notes' | 'whiteboards';
 
-export type ActiveView = InputPresentationScreen | 'calendar' | 'today';
+export type ActiveView = InputPresentationScreen | 'calendar' | 'today' | 'archives';
 
 export type TaskDisplayMode = 'list' | 'kanban';
 
@@ -107,6 +111,8 @@ export interface Whiteboard {
   readonly elements: readonly WhiteboardElement[];
   readonly links?: readonly LocalRef[];
   readonly assetIds: readonly string[];
+  readonly archived?: boolean;
+  readonly archivedAt?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -140,6 +146,7 @@ export interface Project {
   readonly name: string;
   readonly description: string;
   readonly archived: boolean;
+  readonly archivedAt?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -151,6 +158,7 @@ export interface Task {
   readonly status: TaskStatus | null;
   readonly priority: TaskPriority;
   readonly dueDate: string | null;
+  readonly dueTime?: string | null;
   readonly recurrence?: TaskRecurrence | null;
   readonly position: number;
   readonly descriptionDoc: RichTextDoc;
@@ -158,6 +166,8 @@ export interface Task {
   readonly tags?: readonly string[];
   readonly links?: readonly LocalRef[];
   readonly assetIds: readonly string[];
+  readonly archived?: boolean;
+  readonly archivedAt?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -170,6 +180,8 @@ export interface Note {
   readonly tags?: readonly string[];
   readonly links?: readonly LocalRef[];
   readonly assetIds: readonly string[];
+  readonly archived?: boolean;
+  readonly archivedAt?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -190,6 +202,7 @@ export interface AppPreferences {
   readonly selectedWhiteboardId: string | null;
   readonly inputPresentations: InputPresentationMap;
   readonly taskStatuses: readonly TaskStatusConfig[];
+  readonly statusRolesConfigured?: boolean;
   readonly toastDurationSeconds: number;
   readonly trashRetentionDays: number;
 }
@@ -301,6 +314,7 @@ export type AppCommand =
       readonly status?: TaskStatus | null;
       readonly priority?: TaskPriority;
       readonly dueDate?: string | null;
+      readonly dueTime?: string | null;
       readonly recurrence?: TaskRecurrence | null;
       readonly descriptionDoc?: RichTextDoc;
       readonly checklist?: readonly ChecklistItem[];
@@ -318,6 +332,7 @@ export type AppCommand =
         readonly status?: TaskStatus | null;
         readonly priority?: TaskPriority;
         readonly dueDate?: string | null;
+        readonly dueTime?: string | null;
         readonly recurrence?: TaskRecurrence | null;
         readonly descriptionDoc?: RichTextDoc;
         readonly checklist?: readonly ChecklistItem[];
@@ -327,6 +342,12 @@ export type AppCommand =
       };
       readonly nextOccurrenceId?: string;
       readonly todayIso?: string;
+      readonly now: string;
+    }
+  | {
+      readonly type: 'toggle_archive_task';
+      readonly id: string;
+      readonly archived: boolean;
       readonly now: string;
     }
   | {
@@ -369,6 +390,12 @@ export type AppCommand =
       };
       readonly now: string;
     }
+  | {
+      readonly type: 'toggle_archive_note';
+      readonly id: string;
+      readonly archived: boolean;
+      readonly now: string;
+    }
   | { readonly type: 'delete_note'; readonly id: string }
   | {
       readonly type: 'trash_note';
@@ -398,6 +425,12 @@ export type AppCommand =
         readonly links?: readonly LocalRef[];
         readonly assetIds?: readonly string[];
       };
+      readonly now: string;
+    }
+  | {
+      readonly type: 'toggle_archive_whiteboard';
+      readonly id: string;
+      readonly archived: boolean;
       readonly now: string;
     }
   | { readonly type: 'delete_whiteboard'; readonly id: string }

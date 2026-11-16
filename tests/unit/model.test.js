@@ -11,8 +11,15 @@ import {
   createTask,
   createTaskStatusId,
   createWhiteboard,
+  getDefaultInitialTaskStatusId,
+  getDefaultTerminalTaskStatusId,
   getTaskRecurrenceLabel,
   getTaskStatusMeta,
+  getTaskStatusRole,
+  inferLegacyTaskStatusRoles,
+  isInitialTaskStatus,
+  isTerminalTaskStatus,
+  normalizeDueTime,
   getWhiteboardElementLayerBounds,
   normalizeTaskRecurrence,
   normalizeTaskStatuses,
@@ -479,5 +486,80 @@ describe('model', () => {
       ['b', 0],
       ['c', 2],
     ]);
+  });
+
+  it('gère les rôles sémantiques initial/terminal des statuts, l’heure limite et les indicateurs d’archive', () => {
+    expect(DEFAULT_TASK_STATUSES[0]?.isInitial).toBe(true);
+    expect(DEFAULT_TASK_STATUSES[2]?.isTerminal).toBe(true);
+    expect(getTaskStatusRole('todo', DEFAULT_TASK_STATUSES)).toBe('initial');
+    expect(getTaskStatusRole('in_progress', DEFAULT_TASK_STATUSES)).toBeNull();
+    expect(getTaskStatusRole('done', DEFAULT_TASK_STATUSES)).toBe('terminal');
+    expect(isInitialTaskStatus('todo', DEFAULT_TASK_STATUSES)).toBe(true);
+    expect(isTerminalTaskStatus('done', DEFAULT_TASK_STATUSES)).toBe(true);
+    expect(getDefaultInitialTaskStatusId(DEFAULT_TASK_STATUSES)).toBe('todo');
+    expect(getDefaultTerminalTaskStatusId(DEFAULT_TASK_STATUSES)).toBe('done');
+
+    // Inférence des statuts hérités
+    const inferred = inferLegacyTaskStatusRoles([
+      { id: 'todo', label: 'À faire' },
+      { id: 'review', label: 'Revue' },
+      { id: 'done', label: 'Terminé' },
+    ]);
+    expect(inferred[0]?.isInitial).toBe(true);
+    expect(inferred[1]?.isInitial).toBeUndefined();
+    expect(inferred[2]?.isTerminal).toBe(true);
+
+    // Exclusion mutuelle : isTerminal prime si les deux booléens sont fournis
+    const normalized = normalizeTaskStatuses([
+      { id: 's1', label: 'Clôture', isInitial: true, isTerminal: true },
+    ]);
+    expect(normalized).toEqual([{ id: 's1', label: 'Clôture', isTerminal: true }]);
+
+    // Normalisation dueTime et suppression sans date
+    expect(normalizeDueTime('19:05')).toBe('19:05');
+    expect(() => normalizeDueTime('25:00')).toThrow();
+    const tTimed = createTask({
+      id: 't-time',
+      projectId: 'p1',
+      title: 'Réunion tardive',
+      dueDate: '2026-11-16',
+      dueTime: '20:30',
+      archived: true,
+      archivedAt: NOW,
+      now: NOW,
+    });
+    expect(tTimed.dueTime).toBe('20:30');
+    expect(tTimed.archived).toBe(true);
+    expect(tTimed.archivedAt).toBe(NOW);
+
+    const tNoDate = createTask({
+      id: 't-notime',
+      projectId: 'p1',
+      title: 'Sans date',
+      dueDate: null,
+      dueTime: '20:30',
+      now: NOW,
+    });
+    expect(tNoDate.dueTime).toBeUndefined();
+    expect(tNoDate.archived).toBeUndefined();
+
+    const nArch = createNote({
+      id: 'n-arch',
+      projectId: null,
+      title: 'Archive note',
+      archived: true,
+      archivedAt: NOW,
+      now: NOW,
+    });
+    expect(nArch.archived).toBe(true);
+    const wArch = createWhiteboard({
+      id: 'w-arch',
+      projectId: null,
+      title: 'Archive WB',
+      archived: true,
+      archivedAt: NOW,
+      now: NOW,
+    });
+    expect(wArch.archived).toBe(true);
   });
 });

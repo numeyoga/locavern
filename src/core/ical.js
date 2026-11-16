@@ -1,7 +1,12 @@
 /** @import { Project, Task, TaskPriority, TaskStatusConfig } from '../types.d.ts' */
 
-import { parseIsoDate, shiftIsoDate } from './dates.js';
-import { getTaskStatusMeta } from './model.js';
+import { parseIsoDate, parseTimeHhMm, shiftIsoDate } from './dates.js';
+import {
+  DEFAULT_TASK_STATUSES,
+  getTaskStatusMeta,
+  isInitialTaskStatus,
+  isTerminalTaskStatus,
+} from './model.js';
 import { extractRichTextPlainText } from './search.js';
 
 const utf8Encoder = new TextEncoder();
@@ -88,14 +93,16 @@ export function formatIcsUtcStamp(isoTimestamp, fallbackIso = '2026-11-15T00:00:
 }
 
 /**
- * Map internal task status id to RFC 5545 VEVENT STATUS.
+ * Map internal task status id and role to RFC 5545 VEVENT STATUS.
  * @param {string | null} status
+ * @param {readonly TaskStatusConfig[]} [statuses]
  * @returns {'COMPLETED' | 'CONFIRMED' | 'TENTATIVE'}
  */
-function mapTaskStatusToIcs(status) {
-  if (status === 'done') return 'COMPLETED';
+function mapTaskStatusToIcs(status, statuses = DEFAULT_TASK_STATUSES) {
+  if (isTerminalTaskStatus(status, statuses) || status === 'done') return 'COMPLETED';
+  if (isInitialTaskStatus(status, statuses)) return 'TENTATIVE';
   if (status === 'in_progress') return 'CONFIRMED';
-  return 'TENTATIVE';
+  return status ? 'CONFIRMED' : 'TENTATIVE';
 }
 
 /**
@@ -138,7 +145,7 @@ function buildTaskDescription(task, statuses, projectName) {
 }
 
 /**
- * Build an RFC 5545 iCalendar (.ics) string for all dated tasks in the input list.
+ * Build an RFC 5545 iCalendar (.ics) string for all dated non-archived tasks in the input list.
  * Tasks without a valid `dueDate` are excluded.
  *
  * @param {readonly Task[]} tasks
@@ -153,11 +160,15 @@ function buildTaskDescription(task, statuses, projectName) {
 export function buildTasksIcsCalendar(tasks, projects, opts = {}) {
   const calName = opts.calName ?? 'Locavern — Échéances';
   const nowIso = opts.now ?? new Date().toISOString();
+  const statuses = opts.statuses ?? DEFAULT_TASK_STATUSES;
   const projectsById = new Map(projects.map((p) => [p.id, p]));
 
   /** @type {Task[]} */
   const datedTasks = [];
   for (const task of tasks) {
+    if (task.archived) continue;
+    const parent = projectsById.get(task.projectId);
+    if (parent?.archived) continue;
     if (task.dueDate && parseIsoDate(task.dueDate)) {
       datedTasks.push(task);
     }
@@ -166,6 +177,8 @@ export function buildTasksIcsCalendar(tasks, projects, opts = {}) {
   datedTasks.sort((a, b) => {
     const cmpDate = (a.dueDate ?? '').localeCompare(b.dueDate ?? '');
     if (cmpDate !== 0) return cmpDate;
+    const cmpTime = (a.dueTime ?? '').localeCompare(b.dueTime ?? '');
+    if (cmpTime !== 0) return cmpTime;
     return a.title.localeCompare(b.title, 'fr');
   });
 
@@ -181,21 +194,36 @@ export function buildTasksIcsCalendar(tasks, projects, opts = {}) {
 
   for (const task of datedTasks) {
     const dueDate = /** @type {string} */ (task.dueDate);
+    const timeParts = parseTimeHhMm(task.dueTime);
     const nextDate = shiftIsoDate(dueDate, 1);
     const project = projectsById.get(task.projectId);
     const projectName = project?.name ?? null;
     const prioInfo = PRIORITY_INFO[task.priority] ?? PRIORITY_INFO.medium;
     const dtStamp = formatIcsUtcStamp(task.updatedAt || nowIso, nowIso);
-    const description = buildTaskDescription(task, opts.statuses, projectName);
+    const description = buildTaskDescription(task, statuses, projectName);
 
     lines.push('BEGIN:VEVENT');
     lines.push(`UID:locavern-task-${toSafeUidPart(task.id)}@locavern.local`);
     lines.push(`DTSTAMP:${dtStamp}`);
-    lines.push(`DTSTART;VALUE=DATE:${formatIcsDateValue(dueDate)}`);
-    lines.push(`DTEND;VALUE=DATE:${formatIcsDateValue(nextDate)}`);
+    if (timeParts) {
+      const startDateCompact = formatIcsDateValue(dueDate);
+      const hh = String(timeParts.hour).padStart(2, '0');
+      const mm = String(timeParts.minute).padStart(2, '0');
+      const endTotalMinutes = timeParts.hour * 60 + timeParts.minute + 60;
+      const endDateCompact =
+        endTotalMinutes >= 1440 ? formatIcsDateValue(nextDate) : startDateCompact;
+      const clampedMinutes = endTotalMinutes % 1440;
+      const endHh = String(Math.floor(clampedMinutes / 60)).padStart(2, '0');
+      const endMm = String(clampedMinutes % 60).padStart(2, '0');
+      lines.push(`DTSTART:${startDateCompact}T${hh}${mm}00`);
+      lines.push(`DTEND:${endDateCompact}T${endHh}${endMm}00`);
+    } else {
+      lines.push(`DTSTART;VALUE=DATE:${formatIcsDateValue(dueDate)}`);
+      lines.push(`DTEND;VALUE=DATE:${formatIcsDateValue(nextDate)}`);
+    }
     lines.push(`SUMMARY:${escapeIcsText(task.title)}`);
     lines.push(`DESCRIPTION:${escapeIcsText(description)}`);
-    lines.push(`STATUS:${mapTaskStatusToIcs(task.status)}`);
+    lines.push(`STATUS:${mapTaskStatusToIcs(task.status, statuses)}`);
     lines.push(`PRIORITY:${prioInfo.icsPriority}`);
     if (projectName) {
       lines.push(`CATEGORIES:${escapeIcsText(projectName)}`);

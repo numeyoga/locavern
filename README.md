@@ -1,12 +1,12 @@
 ---
 version: '0.2.0'
 cree_le: 2026-11-13
-mis_a_jour_le: 2026-11-15
+mis_a_jour_le: 2026-11-16
 ---
 
 # Locavern
 
-Locavern est une application web local-first de productivité personnelle (tableau de bord quotidien, projets, tâches récurrentes en vues liste, Kanban et calendrier avec export `.ics`, notes enrichies avec export `.md`, tableau blanc SVG interactif, étiquettes, liens internes, modèles locaux, corbeille locale et archives ZIP claires ou chiffrées), exécutée entièrement dans le navigateur sans backend ni requête vers des domaines tiers.
+Locavern est une application web local-first de productivité personnelle (tableau de bord quotidien, projets, tâches récurrentes en vues liste, Kanban et calendrier avec export `.ics`, notes enrichies avec export `.md`, tableau blanc SVG interactif, étiquettes, liens internes, modèles locaux, vue d’archives transversale, corbeille locale et archives ZIP claires ou chiffrées), exécutée entièrement dans le navigateur sans backend ni requête vers des domaines tiers.
 
 ## Sommaire
 
@@ -17,10 +17,10 @@ Locavern est une application web local-first de productivité personnelle (table
 
 ## Périmètre fonctionnel
 
-- **Planification et tâches** : vue **Aujourd’hui** (indicateurs, retards, complétion directe et éléments récents), **Projets** filtrables (`Tous` / `Actifs` / `Archivés`), **Tâches** en vue Liste (ajout rapide, badges d’urgence) et Kanban configurable (ajout rapide par colonne, glisser-déposer, menu Popover, clavier `Alt` + flèches, régularisation hors colonnes), récurrence (`Quotidienne`, `Hebdomadaire`, `Mensuelle`) et vue **Calendrier** (`Mois`/`Semaine`, report par glisser-déposer ou clavier, export `.ics`).
-- **Transversalité et recherche** : étiquettes multi-entités sur tâches et notes, liens internes bidirectionnels (`Éléments liés` / `Lié depuis :`) entre tâches, notes et tableaux blancs, modèles locaux intégrés et personnalisés (checklists, notes, tableaux blancs) et palette dynamique `Ctrl+K`.
-- **Notes enrichies** : éditeur Tiptap Core headless (`Titre 1` à `3`, gras, italique, barré, code, listes à cocher, liens `https://` et `mailto:`), duplication, export Markdown (`.md`) et images locales stockées en `Blob` dans `IndexedDB` (blocage des images distantes).
-- **Tableau blanc SVG** : canevas SVG natif avec sélection par zone, multi-sélection (`Maj+clic`, `Maj+Espace`, `Ctrl+A`), duplication (`Ctrl+D`), aimantation des flèches aux ancres des formes, grille `20 px` avec magnétisme, Post-it, rectangles, ellipses, flèches, texte, tracés libres et images locales, 5 couleurs sémantiques Covenant, historique Annuler/Rétablir, zoom / ajustement à la vue, manipulation complète au clavier (WCAG 2.2 AA) et export autonome `.svg` et `.png`.
+- **Planification et tâches** : vue **Aujourd’hui** (indicateurs, retards, complétion directe et éléments récents), **Projets** actifs, **Tâches** en vue Liste (ajout rapide, badges d’urgence et rôles de statut) et Kanban configurable (colonnes **Initial** / intermédiaire / **Terminal**, ajout rapide par colonne, glisser-déposer, menu Popover, clavier `Alt` + flèches, régularisation hors colonnes), récurrence (`Quotidienne`, `Hebdomadaire`, `Mensuelle`) et vue **Calendrier** (`Mois`/`Semaine` avec différenciation week-end `Sam`/`Dim`, créneau `18h–7h`, grille horaire `00:00`–`23:00` + `Sans heure`, report par glisser-déposer ou clavier, export `.ics`).
+- **Transversalité, archives et recherche** : étiquettes multi-entités sur tâches et notes, liens internes bidirectionnels (`Éléments liés` / `Lié depuis :`) entre tâches, notes et tableaux blancs (avec blocage des nouveaux liens sur statut **Terminal**), archivage complet des projets, tâches, notes et tableaux blancs avec vue dédiée **Archives** (filtrage par texte, type, projet, étiquette, réactivation ou envoi en corbeille), modèles locaux intégrés et personnalisés et palette dynamique `Ctrl+K`.
+- **Notes enrichies** : éditeur Tiptap Core headless (`Titre 1` à `3`, gras, italique, barré, code, listes à cocher, liens `https://` et `mailto:`), duplication, archivage, export Markdown (`.md`) et images locales stockées en `Blob` dans `IndexedDB` (blocage des images distantes).
+- **Tableau blanc SVG** : canevas SVG natif avec sélection par zone, multi-sélection (`Maj+clic`, `Maj+Espace`, `Ctrl+A`), duplication (`Ctrl+D`), aimantation des flèches aux ancres des formes, grille `20 px` avec magnétisme, Post-it, rectangles, ellipses, flèches, texte, tracés libres et images locales, 5 couleurs sémantiques Covenant, historique Annuler/Rétablir, zoom / ajustement à la vue, manipulation complète au clavier (WCAG 2.2 AA), archivage et export autonome `.svg` et `.png`.
 - **Corbeille, stockage et portabilité** : persistance `IndexedDB` (`idb`, `DB_VERSION = 4`), corbeille locale à rétention configurable (`1` à `365` jours) avec purge des images orphelines, protection multi-onglets par Web Locks (`navigator.locks`), export/import d’archives ZIP en clair ou chiffrées (`AES-256-GCM` + `PBKDF2-SHA-256`), fusion sans écrasement ou import sélectif par projets, enregistrement via `showSaveFilePicker`, mode hors ligne PWA avec bandeau de mise à jour Service Worker et CSP stricte sans CDN.
 
 ## Démarrage et scripts

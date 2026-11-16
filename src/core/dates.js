@@ -1,5 +1,5 @@
 /**
- * Pure, timezone-drift-free helpers for ISO calendar dates (YYYY-MM-DD).
+ * Pure, timezone-drift-free helpers for ISO calendar dates (YYYY-MM-DD) and wall-clock times (HH:MM).
  * All arithmetic uses UTC timestamps derived exclusively from calendar year/month/day
  * so DST transitions and local UTC offsets never shift dates by +-1 day.
  */
@@ -62,6 +62,66 @@ export function parseIsoDate(value) {
     return null;
   }
   return { year, month, day };
+}
+
+/**
+ * Parse and validate an optional HH:MM 24-hour wall-clock time string.
+ * @param {string | null | undefined} value
+ * @returns {{ hour: number; minute: number; normalized: string } | null}
+ */
+export function parseTimeHhMm(value) {
+  if (typeof value !== 'string') return null;
+  const match = /^(\d{2}):(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) return null;
+  if (!Number.isInteger(minute) || minute < 0 || minute > 59) return null;
+  return {
+    hour,
+    minute,
+    normalized: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+  };
+}
+
+/**
+ * Return true if an hour (0..23) falls within the 18:00–07:00 off-hours slot
+ * (i.e., 18:00..23:59 or 00:00..06:59).
+ * @param {number} hour
+ * @returns {boolean}
+ */
+export function isOffHoursHour(hour) {
+  return hour >= 18 || hour < 7;
+}
+
+/**
+ * Return true if a dueTime ("HH:MM") falls within the 18:00–07:00 off-hours slot.
+ * @param {string | null | undefined} dueTime
+ * @returns {boolean}
+ */
+export function isOffHoursDueTime(dueTime) {
+  const parsed = parseTimeHhMm(dueTime);
+  if (!parsed) return false;
+  return isOffHoursHour(parsed.hour);
+}
+
+/**
+ * Return true if a 0-based Monday-start weekday index corresponds to Saturday (5) or Sunday (6).
+ * @param {number} weekdayIndex
+ * @returns {boolean}
+ */
+export function isWeekendWeekdayIndex(weekdayIndex) {
+  return weekdayIndex === 5 || weekdayIndex === 6;
+}
+
+/**
+ * Return true if a YYYY-MM-DD calendar date falls on Saturday or Sunday.
+ * @param {string | null | undefined} isoDate
+ * @returns {boolean}
+ */
+export function isWeekendIsoDate(isoDate) {
+  if (!isoDate || !parseIsoDate(isoDate)) return false;
+  return isWeekendWeekdayIndex(getIsoWeekdayMon0(isoDate));
 }
 
 /**
@@ -180,7 +240,7 @@ export function diffIsoDays(aIsoDate, bIsoDate) {
  * Build the Monday-to-Sunday calendar grid for a given year and month (1..12).
  * @param {number} year
  * @param {number} month 1..12
- * @returns {Array<{ date: string; day: number; month: number; year: number; inCurrentMonth: boolean; weekdayIndex: number }>}
+ * @returns {Array<{ date: string; day: number; month: number; year: number; inCurrentMonth: boolean; weekdayIndex: number; isWeekend: boolean }>}
  */
 export function buildMonthCalendarGrid(year, month) {
   const firstIso = formatIsoDate(year, month, 1);
@@ -189,19 +249,21 @@ export function buildMonthCalendarGrid(year, month) {
   const totalCells = Math.ceil((leadingDays + daysInMonth) / 7) * 7;
   const gridStartIso = shiftIsoDate(firstIso, -leadingDays);
 
-  /** @type {Array<{ date: string; day: number; month: number; year: number; inCurrentMonth: boolean; weekdayIndex: number }>} */
+  /** @type {Array<{ date: string; day: number; month: number; year: number; inCurrentMonth: boolean; weekdayIndex: number; isWeekend: boolean }>} */
   const cells = [];
   for (let i = 0; i < totalCells; i += 1) {
     const date = shiftIsoDate(gridStartIso, i);
     const parts = parseIsoDate(date);
     if (!parts) continue;
+    const weekdayIndex = i % 7;
     cells.push({
       date,
       day: parts.day,
       month: parts.month,
       year: parts.year,
       inCurrentMonth: parts.year === year && parts.month === month,
-      weekdayIndex: i % 7,
+      weekdayIndex,
+      isWeekend: isWeekendWeekdayIndex(weekdayIndex),
     });
   }
   return cells;
@@ -210,11 +272,11 @@ export function buildMonthCalendarGrid(year, month) {
 /**
  * Build the 7-day Monday-to-Sunday week containing `anchorIsoDate`.
  * @param {string} anchorIsoDate
- * @returns {Array<{ date: string; day: number; month: number; year: number; weekdayIndex: number; weekdayLabel: string }>}
+ * @returns {Array<{ date: string; day: number; month: number; year: number; weekdayIndex: number; weekdayLabel: string; isWeekend: boolean }>}
  */
 export function buildWeekCalendarGrid(anchorIsoDate) {
   const startIso = getWeekStartIsoDate(anchorIsoDate);
-  /** @type {Array<{ date: string; day: number; month: number; year: number; weekdayIndex: number; weekdayLabel: string }>} */
+  /** @type {Array<{ date: string; day: number; month: number; year: number; weekdayIndex: number; weekdayLabel: string; isWeekend: boolean }>} */
   const days = [];
   for (let i = 0; i < 7; i += 1) {
     const date = shiftIsoDate(startIso, i);
@@ -227,6 +289,7 @@ export function buildWeekCalendarGrid(anchorIsoDate) {
       year: parts.year,
       weekdayIndex: i,
       weekdayLabel: WEEKDAY_SHORT_FR[i] ?? '',
+      isWeekend: isWeekendWeekdayIndex(i),
     });
   }
   return days;
@@ -258,14 +321,15 @@ export function formatShortDateFr(isoDate, withYear = false) {
 
 /**
  * Classify a task dueDate relative to todayIso ('overdue' | 'today' | 'this_week' | 'later' | null).
- * Returns null for missing dates or completed ('done') tasks.
+ * Returns null for missing dates or completed/terminal tasks.
  * @param {string | null | undefined} dueDate
  * @param {string} todayIso
  * @param {string | null} [status]
+ * @param {boolean} [isTerminal]
  * @returns {'overdue' | 'today' | 'this_week' | 'later' | null}
  */
-export function classifyDueDateUrgency(dueDate, todayIso, status = null) {
-  if (!dueDate || status === 'done') return null;
+export function classifyDueDateUrgency(dueDate, todayIso, status = null, isTerminal = false) {
+  if (!dueDate || isTerminal || status === 'done') return null;
   if (!parseIsoDate(dueDate) || !parseIsoDate(todayIso)) return null;
   const delta = diffIsoDays(todayIso, dueDate);
   if (delta < 0) return 'overdue';

@@ -1,7 +1,7 @@
 ---
 version: '0.2.0'
 cree_le: 2026-11-13
-mis_a_jour_le: 2026-11-15
+mis_a_jour_le: 2026-11-16
 ---
 
 # Comment installer Locavern et l’utiliser hors ligne
@@ -29,7 +29,7 @@ Locavern s’ouvre dans une fenêtre dédiée, sans barre d’adresse, et utilis
 1. Après le premier chargement complet de l’application, coupez le réseau (ou activez le mode hors ligne dans les outils de développement du navigateur).
 2. Rechargez la page ou rouvrez l’application installée.
 
-L’interface complète (polices, icônes, thèmes clair/sombre, vues **Aujourd’hui**, **Tâches**, **Projets**, **Calendrier**, **Notes**, **Tableaux blancs**, **Corbeille**, **Sauvegardes**, modèles intégrés et exports locaux `.zip`, `.ics`, `.md`, `.svg`, `.png`) reste accessible et vos modifications continuent d’être enregistrées localement.
+L’interface complète (polices, icônes, thèmes clair/sombre, vues **Aujourd’hui**, **Tâches**, **Projets**, **Calendrier**, **Notes**, **Tableaux blancs**, **Archives**, **Corbeille**, **Sauvegardes**, modèles intégrés et exports locaux `.zip`, `.ics`, `.md`, `.svg`, `.png`) reste accessible et vos modifications continuent d’être enregistrées localement.
 
 ## Mettre à jour une version installée
 

@@ -335,4 +335,83 @@ describe('schema', () => {
       expect(res.data.tasks[1]?.recurrence).toBeUndefined();
     }
   });
+
+  it('préserve dueTime, les champs d’archive et les rôles de statut lors de la validation de sauvegarde', () => {
+    const res = validateBackupData({
+      schemaVersion: 2,
+      exportedAt: NOW,
+      taskStatuses: [
+        { id: 'nouveau', label: 'Nouveau', isInitial: true },
+        { id: 'cloture', label: 'Clôturé', isTerminal: true },
+      ],
+      projects: [
+        {
+          id: 'p1',
+          name: 'P1',
+          description: '',
+          archived: true,
+          archivedAt: NOW,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+      tasks: [
+        {
+          id: 't1',
+          projectId: 'p1',
+          title: 'Tâche soir',
+          status: 'nouveau',
+          priority: 'high',
+          dueDate: '2026-11-20',
+          dueTime: '21:15',
+          archived: true,
+          archivedAt: NOW,
+          position: 0,
+          descriptionDoc: { type: 'doc', content: [] },
+          checklist: [],
+          assetIds: [],
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+      notes: [
+        {
+          id: 'n1',
+          projectId: 'p1',
+          title: 'Note archivée',
+          archived: true,
+          archivedAt: NOW,
+          contentDoc: { type: 'doc', content: [] },
+          assetIds: [],
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+      whiteboards: [
+        {
+          id: 'w1',
+          projectId: 'p1',
+          title: 'WB archivé',
+          archived: true,
+          archivedAt: NOW,
+          viewport: { panX: 0, panY: 0, zoom: 1 },
+          elements: [],
+          assetIds: [],
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+      assets: [],
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.taskStatuses?.[0]?.isInitial).toBe(true);
+      expect(res.data.taskStatuses?.[1]?.isTerminal).toBe(true);
+      expect(res.data.projects[0]?.archivedAt).toBe(NOW);
+      expect(res.data.tasks[0]?.dueTime).toBe('21:15');
+      expect(res.data.tasks[0]?.archived).toBe(true);
+      expect(res.data.notes[0]?.archived).toBe(true);
+      expect(res.data.whiteboards[0]?.archived).toBe(true);
+    }
+  });
 });

@@ -6,6 +6,9 @@ import {
   collectDocAssetIds,
   collectWhiteboardAssetIds,
   normalizeDueDate,
+  normalizeDueTime,
+  normalizeLocalRefs,
+  normalizeTags,
   normalizeTaskRecurrence,
   normalizeTaskStatuses,
   sanitizeRichTextDoc,
@@ -47,11 +50,14 @@ function parseProject(raw) {
   const createdAt = asNonEmptyString(raw.createdAt);
   const updatedAt = asNonEmptyString(raw.updatedAt);
   if (!id || !name || !createdAt || !updatedAt) return null;
+  const archived = Boolean(raw.archived);
+  const archivedAt = archived ? asNonEmptyString(raw.archivedAt) : null;
   return Object.freeze({
     id,
     name: name.slice(0, 120),
     description: typeof raw.description === 'string' ? raw.description.trim().slice(0, 1000) : '',
-    archived: Boolean(raw.archived),
+    archived,
+    ...(archivedAt ? { archivedAt } : {}),
     createdAt,
     updatedAt,
   });
@@ -109,6 +115,16 @@ function parseTask(raw) {
     return null;
   }
 
+  /** @type {string | null} */
+  let dueTime = null;
+  if (dueDate && raw.dueTime !== null && raw.dueTime !== undefined) {
+    try {
+      dueTime = normalizeDueTime(String(raw.dueTime));
+    } catch {
+      return null;
+    }
+  }
+
   const recurrence = normalizeTaskRecurrence(raw.recurrence);
   const checklist = parseChecklist(raw.checklist);
   if (!checklist) return null;
@@ -118,6 +134,10 @@ function parseTask(raw) {
     ? raw.assetIds.filter((a) => typeof a === 'string' && a.trim().length > 0)
     : [];
   const assetIds = [...new Set([...rawAssetIds, ...collectDocAssetIds(descriptionDoc)])];
+  const tags = normalizeTags(raw.tags);
+  const links = normalizeLocalRefs(raw.links, { kind: 'task', id });
+  const archived = Boolean(raw.archived);
+  const archivedAt = archived ? asNonEmptyString(raw.archivedAt) : null;
 
   return Object.freeze({
     id,
@@ -126,11 +146,15 @@ function parseTask(raw) {
     status,
     priority,
     dueDate,
+    ...(dueTime ? { dueTime } : {}),
     ...(recurrence ? { recurrence } : {}),
     position: typeof raw.position === 'number' && raw.position >= 0 ? Math.trunc(raw.position) : 0,
     descriptionDoc,
     checklist,
+    ...(tags.length > 0 ? { tags } : {}),
+    ...(links.length > 0 ? { links } : {}),
     assetIds,
+    ...(archived ? { archived: true, ...(archivedAt ? { archivedAt } : {}) } : {}),
     createdAt,
     updatedAt,
   });
@@ -157,13 +181,20 @@ function parseNote(raw) {
   const contentDoc = sanitizeRichTextDoc(raw.contentDoc);
   const rawAssetIds = Array.isArray(raw.assetIds) ? rawAssetIdsFrom(raw.assetIds) : [];
   const assetIds = [...new Set([...rawAssetIds, ...collectDocAssetIds(contentDoc)])];
+  const tags = normalizeTags(raw.tags);
+  const links = normalizeLocalRefs(raw.links, { kind: 'note', id });
+  const archived = Boolean(raw.archived);
+  const archivedAt = archived ? asNonEmptyString(raw.archivedAt) : null;
 
   return Object.freeze({
     id,
     projectId,
     title: title.slice(0, 200),
     contentDoc,
+    ...(tags.length > 0 ? { tags } : {}),
+    ...(links.length > 0 ? { links } : {}),
     assetIds,
+    ...(archived ? { archived: true, ...(archivedAt ? { archivedAt } : {}) } : {}),
     createdAt,
     updatedAt,
   });
@@ -192,6 +223,9 @@ export function parseWhiteboard(raw) {
   const elements = sanitizeWhiteboardElements(raw.elements);
   const rawAssetIds = Array.isArray(raw.assetIds) ? rawAssetIdsFrom(raw.assetIds) : [];
   const assetIds = [...new Set([...rawAssetIds, ...collectWhiteboardAssetIds(elements)])];
+  const links = normalizeLocalRefs(raw.links, { kind: 'whiteboard', id });
+  const archived = Boolean(raw.archived);
+  const archivedAt = archived ? asNonEmptyString(raw.archivedAt) : null;
 
   return Object.freeze({
     id,
@@ -199,7 +233,9 @@ export function parseWhiteboard(raw) {
     title: title.slice(0, 200),
     viewport,
     elements,
+    ...(links.length > 0 ? { links } : {}),
     assetIds,
+    ...(archived ? { archived: true, ...(archivedAt ? { archivedAt } : {}) } : {}),
     createdAt,
     updatedAt,
   });

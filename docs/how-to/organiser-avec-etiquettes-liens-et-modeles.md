@@ -1,7 +1,7 @@
 ---
 version: '0.2.0'
 cree_le: 2026-11-15
-mis_a_jour_le: 2026-11-15
+mis_a_jour_le: 2026-11-16
 ---
 
 # Comment organiser votre travail avec étiquettes, liens et modèles
@@ -24,18 +24,22 @@ Les étiquettes s’appliquent aux tâches et aux notes, indépendamment du proj
 
 Pour filtrer par étiquette :
 
-- Dans **Tâches** (**Liste** ou **Kanban**) ou dans **Notes**, utilisez le sélecteur **Étiquette** (`Toutes les étiquettes` ou `#<nom>`) afin d’isoler tous les éléments porteurs de ce mot-clé ;
-- Dans la palette `Ctrl+K`, tapez le nom d’une étiquette pour retrouver immédiatement les tâches et notes associées.
+- Dans **Tâches** (**Liste** ou **Kanban**), dans **Notes** ou dans **Archives**, utilisez le sélecteur **Étiquette** (`Toutes les étiquettes` ou `#<nom>`) afin d’isoler tous les éléments porteurs de ce mot-clé ;
+- Dans la palette `Ctrl+K`, tapez le nom d’une étiquette pour retrouver immédiatement les tâches et notes actives associées.
 
 ## Relier tâches, notes et tableaux blancs entre eux
 
-Vous pouvez créer des références croisées entre n’importe quelle tâche, note ou tableau blanc :
+Vous pouvez créer des références croisées entre n’importe quelle tâche, note ou tableau blanc actif, sous réserve des règles de statut et d’archivage :
 
 1. Ouvrez la section **Éléments liés** dans le formulaire d’une tâche, sous l’en-tête d’une note ou au-dessus du canevas d’un tableau blanc.
 2. Dans la liste **Choisir un élément à lier…**, sélectionnez la tâche, la note ou le tableau blanc cible, puis cliquez sur **Lier**.
 3. Cliquez à tout moment sur une puce sous **Éléments liés** pour ouvrir directement l’élément correspondant (y compris s’il appartient à un autre projet).
 
-Les éléments pointés affichent automatiquement les références entrantes dans la zone en lecture seule **Lié depuis :**, permettant de naviguer dans les deux sens. En cas de suppression définitive d’un élément depuis la corbeille locale, Locavern nettoie automatiquement les références devenues invalides.
+Règles appliquées aux liens internes :
+
+- **Statuts terminaux protégés** : lorsqu’une tâche porte un statut marqué **Terminal**, elle ne peut plus recevoir de nouveaux liens ni en créer vers d’autres éléments (le sélecteur **Éléments liés** de cette tâche est désactivé avec un message explicatif et elle est exclue des cibles depuis les autres éléments). Ses liens existants restent consultables et supprimables ;
+- **Éléments archivés exclus** : les tâches, notes et tableaux blancs archivés (directement ou via leur projet) n’apparaissent plus dans les sélecteurs de cibles de liens ;
+- **Rétroliens bidirectionnels et nettoyage** : les éléments pointés affichent les références entrantes dans la zone en lecture seule **Lié depuis :**. En cas de suppression définitive d’un élément depuis la corbeille locale, Locavern nettoie automatiquement les références devenues invalides.
 
 ## Réutiliser et créer des modèles locaux
 

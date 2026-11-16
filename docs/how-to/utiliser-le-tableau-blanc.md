@@ -1,29 +1,30 @@
 ---
 version: '0.2.0'
 cree_le: 2026-11-14
-mis_a_jour_le: 2026-11-15
+mis_a_jour_le: 2026-11-16
 ---
 
 # Comment utiliser le tableau blanc
 
-Ce guide explique comment créer un tableau blanc, sélectionner par zone et dupliquer des éléments, aimanter les flèches et la grille, manipuler les formes à la souris ou au clavier, insérer des images locales et exporter votre schéma au format SVG ou PNG. Pour associer des liens internes ou appliquer un modèle de canevas, consultez [Comment organiser votre travail avec étiquettes, liens et modèles](organiser-avec-etiquettes-liens-et-modeles.md). Les raccourcis complets et les limites de données sont regroupés dans [Interface, vues et raccourcis clavier](../reference/interface-et-raccourcis.md) et [Stockage local, format d’archive et messages d’erreur](../reference/stockage-limites-et-erreurs.md).
+Ce guide explique comment créer et archiver un tableau blanc, sélectionner par zone et dupliquer des éléments, aimanter les flèches et la grille, manipuler les formes à la souris ou au clavier, insérer des images locales et exporter votre schéma au format SVG ou PNG. Pour associer des liens internes ou appliquer un modèle de canevas, consultez [Comment organiser votre travail avec étiquettes, liens et modèles](organiser-avec-etiquettes-liens-et-modeles.md). Les raccourcis complets et les limites de données sont regroupés dans [Interface, vues et raccourcis clavier](../reference/interface-et-raccourcis.md) et [Stockage local, format d’archive et messages d’erreur](../reference/stockage-limites-et-erreurs.md).
 
 ## Sommaire
 
-- [Créer, filtrer et supprimer un tableau blanc](#créer-filtrer-et-supprimer-un-tableau-blanc)
+- [Créer, filtrer, archiver et supprimer un tableau blanc](#créer-filtrer-archiver-et-supprimer-un-tableau-blanc)
 - [Ajouter, sélectionner par zone, dupliquer et modifier des éléments](#ajouter-sélectionner-par-zone-dupliquer-et-modifier-des-éléments)
 - [Aimanter les flèches, afficher la grille et gérer les couches](#aimanter-les-flèches-afficher-la-grille-et-gérer-les-couches)
 - [Utiliser le tableau blanc uniquement au clavier](#utiliser-le-tableau-blanc-uniquement-au-clavier)
 - [Insérer une image locale](#insérer-une-image-locale)
 - [Naviguer, annuler et exporter en SVG ou PNG](#naviguer-annuler-et-exporter-en-svg-ou-png)
 
-## Créer, filtrer et supprimer un tableau blanc
+## Créer, filtrer, archiver et supprimer un tableau blanc
 
 Ouvrez la vue **Tableaux blancs** depuis la barre de navigation latérale (ou via `Ctrl+K` puis **Aller aux tableaux blancs**).
 
 - **Créer un tableau blanc** : cliquez sur **Nouveau tableau blanc** (ou **Créer un tableau blanc** si la liste est vide, ou lancez **Créer un tableau blanc** via `Ctrl+K`), saisissez le **Titre du tableau blanc** et choisissez éventuellement le **Projet associé**, puis cliquez sur **Créer le tableau blanc**. La fenêtre s’ouvre en modale par défaut ou en tiroir latéral selon le réglage choisi dans **Préférences d’affichage** (**Visuel de saisie par écran**).
 - **Renommer et associer à un projet** : modifiez directement **Titre du tableau blanc** et **Projet associé** dans l’en-tête du tableau, ou cliquez sur **Ouvrir la saisie** pour modifier ces informations dans la fenêtre de saisie configurée.
-- **Filtrer et rechercher** : utilisez le menu déroulant en haut à gauche (**Tous les tableaux**, **Sans projet** ou un projet) et le champ **Rechercher titre ou texte du tableau** (recherche sur le titre du tableau et le texte des éléments).
+- **Filtrer et rechercher** : utilisez le menu déroulant en haut à gauche (**Tous les tableaux**, **Sans projet** ou un projet actif) et le champ **Rechercher titre ou texte du tableau** (recherche sur le titre du tableau et le texte des éléments).
+- **Archiver un tableau blanc** : cliquez sur **Archiver** en pied de carte (ou dans la fenêtre de saisie). Le tableau quitte la vue **Tableaux blancs** et rejoint l’écran **Archives**, d’où vous pouvez le désarchiver ou le placer à la corbeille.
 - **Placer un tableau blanc dans la corbeille locale** : cliquez sur **Supprimer** en pied de carte (ou dans la fenêtre de saisie), puis confirmez avec **Supprimer le tableau blanc**. Le tableau reste récupérable depuis la **Corbeille** pendant le délai configuré (voir [Comment sauvegarder, restaurer ou effacer vos données](sauvegarder-et-restaurer.md#récupérer-ou-purger-depuis-la-corbeille-locale)).
 
 ## Ajouter, sélectionner par zone, dupliquer et modifier des éléments

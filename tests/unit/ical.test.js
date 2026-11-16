@@ -84,6 +84,53 @@ describe('ical', () => {
     expect(unfolded).not.toContain('Backlog sans date');
   });
 
+  it('exporte DTSTART/DTEND horaire si dueTime est défini, exclut les archives et respecte les rôles de statut', () => {
+    const pActive = createProject({ id: 'p1', name: 'Actif', now: NOW });
+    const pArchived = createProject({ id: 'p2', name: 'Archivé', archived: true, now: NOW });
+    const statuses = [
+      { id: 'nouveau', label: 'Nouveau', isInitial: true },
+      { id: 'cloture', label: 'Clôturé', isTerminal: true },
+    ];
+    const tTimed = createTask({
+      id: 't-timed',
+      projectId: 'p1',
+      title: 'Astreinte nuit',
+      status: 'nouveau',
+      dueDate: '2026-11-20',
+      dueTime: '23:30',
+      allowedStatuses: statuses.map((s) => s.id),
+      now: NOW,
+    });
+    const tArchived = createTask({
+      id: 't-arch',
+      projectId: 'p1',
+      title: 'Tâche archivée',
+      dueDate: '2026-11-21',
+      archived: true,
+      archivedAt: NOW,
+      now: NOW,
+    });
+    const tViaProj = createTask({
+      id: 't-proj-arch',
+      projectId: 'p2',
+      title: 'Tâche sous projet archivé',
+      dueDate: '2026-11-22',
+      now: NOW,
+    });
+    const { icsContent, exportedCount } = buildTasksIcsCalendar(
+      [tTimed, tArchived, tViaProj],
+      [pActive, pArchived],
+      { statuses, now: NOW },
+    );
+    expect(exportedCount).toBe(1);
+    const unfolded = icsContent.replace(/\r\n /g, '');
+    expect(unfolded).toContain('DTSTART:20261120T233000');
+    expect(unfolded).toContain('DTEND:20261121T003000');
+    expect(unfolded).toContain('STATUS:TENTATIVE');
+    expect(unfolded).not.toContain('Tâche archivée');
+    expect(unfolded).not.toContain('Tâche sous projet archivé');
+  });
+
   it('retourne 0 événement lorsqu’aucune tâche n’a de date', () => {
     const tUndated = createTask({ id: 't1', projectId: 'p1', title: 'Sans date', now: NOW });
     const res = buildTasksIcsCalendar([tUndated], [], { now: NOW });

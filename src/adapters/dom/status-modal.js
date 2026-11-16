@@ -17,7 +17,7 @@ export function openStatusModal() {
 
 /**
  * Wire the Kanban statuses configuration modal (`#modal-statuses`).
- * Allows adding, renaming, reordering, deleting, and resetting task statuses.
+ * Allows adding, renaming, assigning semantic roles (initial/terminal), reordering, deleting, and resetting task statuses.
  * @param {{
  *   store: {
  *     getState: () => AppState;
@@ -35,13 +35,24 @@ export function wireStatusModal({ store }) {
   const modalBody = bodyEl;
   const modalFooter = footerEl;
 
-  /** @type {Array<{ id: string; label: string }>} */
+  /** @type {Array<{ id: string; label: string; isInitial?: boolean; isTerminal?: boolean }>} */
   let draftStatuses = [];
 
   /**
-   * Synchronize in-memory `draftStatuses` labels from currently rendered text inputs before list mutations.
+   * Convert status flags to select value.
+   * @param {{ isInitial?: boolean; isTerminal?: boolean }} item
+   * @returns {'none' | 'initial' | 'terminal'}
    */
-  function syncLabelsFromInputs() {
+  function roleValueOf(item) {
+    if (item.isTerminal) return 'terminal';
+    if (item.isInitial) return 'initial';
+    return 'none';
+  }
+
+  /**
+   * Synchronize in-memory `draftStatuses` labels and roles from currently rendered inputs before list mutations.
+   */
+  function syncDraftFromInputs() {
     const inputs = modalBody.querySelectorAll('input[data-status-index]');
     for (const input of inputs) {
       if (input instanceof HTMLInputElement) {
@@ -52,6 +63,40 @@ export function wireStatusModal({ store }) {
         }
       }
     }
+    const roleSelects = modalBody.querySelectorAll('select[data-status-role-index]');
+    for (const sel of roleSelects) {
+      if (sel instanceof HTMLSelectElement) {
+        const idx = Number.parseInt(sel.dataset.statusRoleIndex ?? '', 10);
+        const item = draftStatuses[idx];
+        if (!Number.isNaN(idx) && item) {
+          item.isInitial = sel.value === 'initial';
+          item.isTerminal = sel.value === 'terminal';
+        }
+      }
+    }
+  }
+
+  /**
+   * Build a small role badge preview element.
+   * @param {'none' | 'initial' | 'terminal'} role
+   * @returns {HTMLSpanElement | null}
+   */
+  function makeRoleBadge(role) {
+    if (role === 'initial') {
+      const b = document.createElement('span');
+      b.className = 'cv-badge cv-badge--accent';
+      b.dataset.statusRoleBadge = 'initial';
+      b.textContent = 'Initial';
+      return b;
+    }
+    if (role === 'terminal') {
+      const b = document.createElement('span');
+      b.className = 'cv-badge cv-badge--success';
+      b.dataset.statusRoleBadge = 'terminal';
+      b.textContent = 'Terminal';
+      return b;
+    }
+    return null;
   }
 
   /**
@@ -71,7 +116,7 @@ export function wireStatusModal({ store }) {
     intro.className = 'cv-hint';
     intro.style.margin = '0';
     intro.textContent =
-      'Définissez les colonnes affichées dans le Kanban. Les tâches sans statut ou associées à un statut supprimé restent visibles dans la liste des tâches avec un repère visuel.';
+      'Définissez les colonnes du Kanban et leur rôle métier. Un statut initial identifie le point d’entrée ; un statut terminal clôture la tâche et empêche d’y ajouter de nouveaux liens.';
 
     const listGroup = document.createElement('div');
     listGroup.className = 'lc-status-list';
@@ -135,6 +180,41 @@ export function wireStatusModal({ store }) {
 
       field.append(label, input, errSpan);
 
+      const roleWrap = document.createElement('div');
+      roleWrap.className = 'cv-select lc-status-row__role';
+      const roleSelect = document.createElement('select');
+      roleSelect.id = `status-role-select-${statusItem.id}`;
+      roleSelect.className = 'cv-input';
+      roleSelect.disabled = readOnly;
+      roleSelect.dataset.statusRoleIndex = String(idx);
+      roleSelect.setAttribute('aria-label', `Rôle du statut ${idx + 1}`);
+      for (const [val, txt] of /** @type {const} */ ([
+        ['none', 'Intermédiaire'],
+        ['initial', 'Initial'],
+        ['terminal', 'Terminal'],
+      ])) {
+        const opt = document.createElement('option');
+        opt.value = val;
+        opt.textContent = txt;
+        roleSelect.append(opt);
+      }
+      roleSelect.value = roleValueOf(statusItem);
+
+      const roleBadgeSlot = document.createElement('span');
+      roleBadgeSlot.className = 'lc-status-row__role-badge';
+      const syncRoleBadgeSlot = () => {
+        const badge = makeRoleBadge(roleValueOf(statusItem));
+        roleBadgeSlot.replaceChildren(...(badge ? [badge] : []));
+      };
+      syncRoleBadgeSlot();
+
+      roleSelect.addEventListener('change', () => {
+        statusItem.isInitial = roleSelect.value === 'initial';
+        statusItem.isTerminal = roleSelect.value === 'terminal';
+        syncRoleBadgeSlot();
+      });
+      roleWrap.append(roleSelect);
+
       const actions = document.createElement('div');
       actions.className = 'lc-status-row__actions';
 
@@ -151,7 +231,7 @@ export function wireStatusModal({ store }) {
       upBtn.append(upIc);
       upBtn.addEventListener('click', () => {
         if (idx <= 0) return;
-        syncLabelsFromInputs();
+        syncDraftFromInputs();
         const prev = draftStatuses[idx - 1];
         const curr = draftStatuses[idx];
         if (!prev || !curr) return;
@@ -176,7 +256,7 @@ export function wireStatusModal({ store }) {
       downBtn.append(downIc);
       downBtn.addEventListener('click', () => {
         if (idx >= draftStatuses.length - 1) return;
-        syncLabelsFromInputs();
+        syncDraftFromInputs();
         const next = draftStatuses[idx + 1];
         const curr = draftStatuses[idx];
         if (!next || !curr) return;
@@ -200,13 +280,13 @@ export function wireStatusModal({ store }) {
       delIc.setAttribute('aria-hidden', 'true');
       delBtn.append(delIc);
       delBtn.addEventListener('click', () => {
-        syncLabelsFromInputs();
+        syncDraftFromInputs();
         draftStatuses = draftStatuses.filter((item) => item.id !== statusItem.id);
         renderDraft({ focusSelector: '#new-status-label-input' });
       });
 
-      actions.append(upBtn, downBtn, delBtn);
-      row.append(field, actions);
+      actions.append(roleBadgeSlot, upBtn, downBtn, delBtn);
+      row.append(field, roleWrap, actions);
       listGroup.append(row);
     });
 
@@ -219,7 +299,7 @@ export function wireStatusModal({ store }) {
     addLabel.textContent = 'Ajouter un statut';
 
     const addRow = document.createElement('div');
-    addRow.className = 'lc-checklist__add';
+    addRow.className = 'lc-checklist__add lc-status-add-row';
     const addInput = document.createElement('input');
     addInput.id = 'new-status-label-input';
     addInput.type = 'text';
@@ -227,6 +307,25 @@ export function wireStatusModal({ store }) {
     addInput.maxLength = 60;
     addInput.placeholder = 'Ex. En revue';
     addInput.disabled = readOnly;
+
+    const addRoleWrap = document.createElement('div');
+    addRoleWrap.className = 'cv-select lc-status-row__role';
+    const addRoleSelect = document.createElement('select');
+    addRoleSelect.id = 'new-status-role-select';
+    addRoleSelect.className = 'cv-input';
+    addRoleSelect.disabled = readOnly;
+    addRoleSelect.setAttribute('aria-label', 'Rôle du nouveau statut');
+    for (const [val, txt] of /** @type {const} */ ([
+      ['none', 'Intermédiaire'],
+      ['initial', 'Initial'],
+      ['terminal', 'Terminal'],
+    ])) {
+      const opt = document.createElement('option');
+      opt.value = val;
+      opt.textContent = txt;
+      addRoleSelect.append(opt);
+    }
+    addRoleWrap.append(addRoleSelect);
 
     const addBtn = document.createElement('button');
     addBtn.type = 'button';
@@ -247,7 +346,7 @@ export function wireStatusModal({ store }) {
     addError.append(addErrIcon, addErrText);
 
     function handleAddStatus() {
-      syncLabelsFromInputs();
+      syncDraftFromInputs();
       const cleanLabel = addInput.value.trim();
       if (!cleanLabel) {
         addInput.setAttribute('aria-invalid', 'true');
@@ -264,7 +363,13 @@ export function wireStatusModal({ store }) {
         ...state.tasks.map((t) => t.status).filter((s) => typeof s === 'string'),
       ];
       const newId = createTaskStatusId(cleanLabel, existingIds);
-      draftStatuses.push({ id: newId, label: cleanLabel.slice(0, 60) });
+      const roleVal = addRoleSelect.value;
+      draftStatuses.push({
+        id: newId,
+        label: cleanLabel.slice(0, 60),
+        isInitial: roleVal === 'initial',
+        isTerminal: roleVal === 'terminal',
+      });
       renderDraft({ focusSelector: '#new-status-label-input' });
     }
 
@@ -283,7 +388,7 @@ export function wireStatusModal({ store }) {
       }
     });
 
-    addRow.append(addInput, addBtn);
+    addRow.append(addInput, addRoleWrap, addBtn);
     addField.append(addLabel, addRow, addError);
 
     form.append(intro, listGroup, addField);
@@ -299,7 +404,12 @@ export function wireStatusModal({ store }) {
     resetBtn.disabled = readOnly;
     resetBtn.textContent = 'Valeurs par défaut';
     resetBtn.addEventListener('click', () => {
-      draftStatuses = DEFAULT_TASK_STATUSES.map((s) => ({ id: s.id, label: s.label }));
+      draftStatuses = DEFAULT_TASK_STATUSES.map((s) => ({
+        id: s.id,
+        label: s.label,
+        ...(s.isInitial ? { isInitial: true } : {}),
+        ...(s.isTerminal ? { isTerminal: true } : {}),
+      }));
       renderDraft({ focusSelector: '#btn-reset-statuses' });
     });
 
@@ -322,7 +432,7 @@ export function wireStatusModal({ store }) {
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       if (readOnly) return;
-      syncLabelsFromInputs();
+      syncDraftFromInputs();
 
       // If the user typed a new status in the "Add" input without clicking "Ajouter", include it
       const pendingNew = addInput.value.trim();
@@ -332,7 +442,13 @@ export function wireStatusModal({ store }) {
           ...state.tasks.map((t) => t.status).filter((s) => typeof s === 'string'),
         ];
         const newId = createTaskStatusId(pendingNew, existingIds);
-        draftStatuses.push({ id: newId, label: pendingNew.slice(0, 60) });
+        const roleVal = addRoleSelect.value;
+        draftStatuses.push({
+          id: newId,
+          label: pendingNew.slice(0, 60),
+          isInitial: roleVal === 'initial',
+          isTerminal: roleVal === 'terminal',
+        });
         addInput.value = '';
       }
 
@@ -376,7 +492,12 @@ export function wireStatusModal({ store }) {
 
   function resetDraftFromStore() {
     const current = store.getState().preferences.taskStatuses;
-    draftStatuses = current.map((s) => ({ id: s.id, label: s.label }));
+    draftStatuses = current.map((s) => ({
+      id: s.id,
+      label: s.label,
+      ...(s.isInitial ? { isInitial: true } : {}),
+      ...(s.isTerminal ? { isTerminal: true } : {}),
+    }));
     renderDraft();
   }
 

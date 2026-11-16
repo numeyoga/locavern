@@ -1,7 +1,12 @@
 /** @import { AppCommand, AppState, LocalRef, Note, RichTextDoc, StoreEffect } from '../../types.d.ts' */
 
 import { EMPTY_RICH_DOC, collectDocAssetIds } from '../../core/model.js';
-import { selectAllTags, selectOrphanedAssetIds, selectTemplates } from '../../core/store.js';
+import {
+  selectAllTags,
+  selectOrphanedAssetIds,
+  selectProjects,
+  selectTemplates,
+} from '../../core/store.js';
 import { instantiateNoteTemplate } from '../../core/templates.js';
 import { createTemplatePicker } from './template-picker.js';
 import { mountRichTextEditor } from '../rich-text-tiptap.js';
@@ -91,6 +96,12 @@ export function openNoteDialog({
   titleError.append(titleErrIcon, titleErrText);
   titleField.append(titleLabel, titleInput, titleError);
 
+  const activeProjects = selectProjects(state);
+  const projectChoices =
+    note?.projectId && !activeProjects.some((p) => p.id === note.projectId)
+      ? [...activeProjects, ...state.projects.filter((p) => p.id === note.projectId)]
+      : activeProjects;
+
   const projectField = document.createElement('div');
   projectField.className = 'cv-field';
   const projectLabel = document.createElement('label');
@@ -107,16 +118,19 @@ export function openNoteDialog({
   noProjOpt.value = '';
   noProjOpt.textContent = 'Sans projet';
   projectSelect.append(noProjOpt);
-  for (const p of state.projects) {
+  for (const p of projectChoices) {
     const opt = document.createElement('option');
     opt.value = p.id;
     opt.textContent = p.archived ? `${p.name} (archivé)` : p.name;
     projectSelect.append(opt);
   }
+  const preferredProj =
+    state.preferences.selectedProjectId &&
+    projectChoices.some((p) => p.id === state.preferences.selectedProjectId)
+      ? state.preferences.selectedProjectId
+      : '';
   projectSelect.value =
-    note !== undefined
-      ? (note.projectId ?? '')
-      : (defaultProjectId ?? state.preferences.selectedProjectId ?? '');
+    note !== undefined ? (note.projectId ?? '') : (defaultProjectId ?? preferredProj);
   projectSelectWrap.append(projectSelect);
   projectField.append(projectLabel, projectSelectWrap);
 
@@ -245,7 +259,6 @@ export function openNoteDialog({
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
     deleteBtn.className = 'cv-btn cv-btn--danger';
-    deleteBtn.style.marginRight = 'auto';
     deleteBtn.textContent = 'Supprimer';
     deleteBtn.addEventListener('click', async () => {
       closeDialogById('dialog-note');
@@ -265,7 +278,31 @@ export function openNoteDialog({
         notify({ status: 'info', title: 'Note placée dans la corbeille', text: note.title });
       }
     });
-    footerButtons.push(deleteBtn);
+
+    const archiveBtn = document.createElement('button');
+    archiveBtn.type = 'button';
+    archiveBtn.id = 'btn-dialog-archive-note';
+    archiveBtn.className = 'cv-btn';
+    archiveBtn.style.marginRight = 'auto';
+    archiveBtn.textContent = note.archived ? 'Désarchiver' : 'Archiver';
+    archiveBtn.addEventListener('click', () => {
+      const nextArchived = !note.archived;
+      store.dispatch({
+        type: 'toggle_archive_note',
+        id: note.id,
+        archived: nextArchived,
+        now: new Date().toISOString(),
+      });
+      closeDialogById('dialog-note');
+      onClose();
+      notify({
+        status: 'info',
+        title: nextArchived ? 'Note archivée' : 'Note désarchivée',
+        text: nextArchived ? `${note.title} déplacée vers les archives.` : note.title,
+      });
+    });
+
+    footerButtons.push(deleteBtn, archiveBtn);
   }
   footerButtons.push(cancelBtn, saveBtn);
   footerEl.replaceChildren(...footerButtons);
@@ -293,36 +330,45 @@ export function openNoteDialog({
     const projectId = projectSelect.value ? projectSelect.value : null;
     const now = new Date().toISOString();
 
-    if (isEdit && note) {
-      store.dispatch({
-        type: 'update_note',
-        id: note.id,
-        patch: {
-          title: cleanTitle,
+    try {
+      if (isEdit && note) {
+        store.dispatch({
+          type: 'update_note',
+          id: note.id,
+          patch: {
+            title: cleanTitle,
+            projectId,
+            contentDoc: doc,
+            tags,
+            links,
+            assetIds,
+          },
+          now,
+        });
+        notify({ status: 'success', title: 'Note enregistrée', text: cleanTitle });
+      } else {
+        const id = crypto.randomUUID();
+        store.dispatch({
+          type: 'create_note',
+          id,
           projectId,
+          title: cleanTitle,
           contentDoc: doc,
           tags,
           links,
           assetIds,
-        },
-        now,
+          now,
+        });
+        notify({ status: 'success', title: 'Note créée', text: cleanTitle });
+        onAfterCreate?.(id);
+      }
+    } catch (err) {
+      notify({
+        status: 'danger',
+        title: 'Enregistrement impossible',
+        text: err instanceof Error ? err.message : 'Erreur de validation.',
       });
-      notify({ status: 'success', title: 'Note enregistrée', text: cleanTitle });
-    } else {
-      const id = crypto.randomUUID();
-      store.dispatch({
-        type: 'create_note',
-        id,
-        projectId,
-        title: cleanTitle,
-        contentDoc: doc,
-        tags,
-        links,
-        assetIds,
-        now,
-      });
-      notify({ status: 'success', title: 'Note créée', text: cleanTitle });
-      onAfterCreate?.(id);
+      return;
     }
 
     const orphanedStaged = selectOrphanedAssetIds(store.getState(), stagedAssetIds);

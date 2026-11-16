@@ -1,4 +1,4 @@
-/** @import { AppCommand, AppState, StoreEffect, Task, TaskPriority, TaskStatus } from '../../types.d.ts' */
+/** @import { AppCommand, AppState, StoreEffect, Task, TaskPriority } from '../../types.d.ts' */
 
 import {
   WEEKDAY_SHORT_FR,
@@ -9,12 +9,16 @@ import {
   formatMonthYearLabel,
   formatShortDateFr,
   getTodayIsoDate,
+  isOffHoursDueTime,
+  isOffHoursHour,
+  isWeekendWeekdayIndex,
   parseIsoDate,
+  parseTimeHhMm,
   shiftIsoDate,
 } from '../../core/dates.js';
-import { getTaskStatusMeta } from '../../core/model.js';
+import { getTaskStatusMeta, isTerminalTaskStatus } from '../../core/model.js';
 import { buildTasksIcsCalendar } from '../../core/ical.js';
-import { selectProjectById, selectTasks } from '../../core/store.js';
+import { selectProjectById, selectProjects, selectTasks } from '../../core/store.js';
 import { saveArchiveBlob } from '../archive-file.js';
 import { notify } from './app-shell.js';
 import { initTooltips, setTooltip } from './tooltip.js';
@@ -31,7 +35,8 @@ let draggedTaskId = null;
 
 /**
  * Render the interactive monthly & weekly Calendar view of task due dates
- * with drag-and-drop and keyboard rescheduling.
+ * with weekend differentiation, 18h–7h off-hours time-band styling,
+ * hourly slot scheduling, drag-and-drop, and keyboard rescheduling.
  * @param {{
  *   container: HTMLElement;
  *   store: {
@@ -44,7 +49,7 @@ let draggedTaskId = null;
  *     focusTaskId: string | null;
  *   };
  *   onOpenTask: (task: Task) => void;
- *   onNewTask: (defaultDueDate?: string | null) => void;
+ *   onNewTask: (defaultDueDate?: string | null, defaultDueTime?: string | null) => void;
  *   onOpenNewProject: () => void;
  * }} opts
  */
@@ -58,8 +63,9 @@ export function renderCalendarView({
 }) {
   const state = store.getState();
   const readOnly = state.readOnly;
+  const activeProjects = selectProjects(state);
 
-  if (state.projects.length === 0) {
+  if (activeProjects.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'cv-empty';
     const iconBox = document.createElement('span');
@@ -70,17 +76,35 @@ export function renderCalendarView({
     iconBox.append(icon);
     const title = document.createElement('p');
     title.className = 'cv-empty__title';
-    title.textContent = 'Créez un premier projet pour planifier vos échéances';
+    title.textContent =
+      state.projects.length === 0
+        ? 'Créez un premier projet pour planifier vos échéances'
+        : 'Tous vos projets sont archivés';
     const desc = document.createElement('p');
     desc.textContent =
-      'Les tâches datées apparaîtront ici en vue mensuelle ou hebdomadaire avec report par glisser-déposer et clavier.';
+      state.projects.length === 0
+        ? 'Les tâches datées apparaîtront ici en vue mensuelle ou hebdomadaire avec report par glisser-déposer et clavier.'
+        : 'Désarchivez un projet depuis les archives ou créez un nouveau projet actif pour afficher son agenda.';
+    const actionsRow = document.createElement('div');
+    actionsRow.className = 'lc-view-header__group';
+    if (state.projects.length > 0) {
+      const archBtn = document.createElement('button');
+      archBtn.type = 'button';
+      archBtn.className = 'cv-btn';
+      archBtn.textContent = 'Ouvrir les archives';
+      archBtn.addEventListener('click', () => {
+        store.dispatch({ type: 'set_view', view: 'archives' });
+      });
+      actionsRow.append(archBtn);
+    }
     const cta = document.createElement('button');
     cta.type = 'button';
     cta.className = 'cv-btn cv-btn--primary';
     cta.disabled = readOnly;
     cta.textContent = 'Créer un projet';
     cta.addEventListener('click', onOpenNewProject);
-    empty.append(iconBox, title, desc, cta);
+    actionsRow.append(cta);
+    empty.append(iconBox, title, desc, actionsRow);
     container.replaceChildren(empty);
     return;
   }
@@ -113,13 +137,18 @@ export function renderCalendarView({
   allOpt.value = '__all__';
   allOpt.textContent = 'Tous les projets';
   projSelect.append(allOpt);
-  for (const proj of state.projects) {
+  for (const proj of activeProjects) {
     const opt = document.createElement('option');
     opt.value = proj.id;
-    opt.textContent = proj.archived ? `${proj.name} (archivé)` : proj.name;
+    opt.textContent = proj.name;
     projSelect.append(opt);
   }
-  projSelect.value = state.preferences.selectedProjectId ?? '__all__';
+  const selectedActiveProjectId =
+    state.preferences.selectedProjectId &&
+    activeProjects.some((p) => p.id === state.preferences.selectedProjectId)
+      ? state.preferences.selectedProjectId
+      : '__all__';
+  projSelect.value = selectedActiveProjectId;
   projSelect.addEventListener('change', () => {
     store.dispatch({
       type: 'select_project',
@@ -229,7 +258,7 @@ export function renderCalendarView({
   plusIc.className = 'ph ph-plus cv-icon';
   plusIc.setAttribute('aria-hidden', 'true');
   newTaskBtn.append(plusIc, document.createTextNode(' Nouvelle tâche'));
-  newTaskBtn.addEventListener('click', () => onNewTask(calendarState.anchorDate));
+  newTaskBtn.addEventListener('click', () => onNewTask(calendarState.anchorDate, null));
 
   rightGroup.append(prevBtn, todayBtn, nextBtn, exportIcsBtn, newTaskBtn);
   header.append(leftGroup, rightGroup);
@@ -266,7 +295,7 @@ export function renderCalendarView({
     rerenderSelf();
   });
 
-  // Period title + keyboard hint + live status region
+  // Period title + keyboard hint + legend + live status region
   const subBar = document.createElement('div');
   subBar.className = 'lc-cal-subbar';
 
@@ -292,7 +321,9 @@ export function renderCalendarView({
   helpText.className = 'cv-caption';
   helpText.style.margin = '0';
   helpText.textContent =
-    'Glissez une tâche sur un jour, ou utilisez Alt/Maj + Flèches ou les boutons −1 j / +1 j pour reporter l’échéance.';
+    calendarState.mode === 'week'
+      ? 'Glissez une tâche sur un créneau horaire ou un jour, ou utilisez Alt/Maj + Flèches ou −1 j / +1 j.'
+      : 'Glissez une tâche sur un jour, ou utilisez Alt/Maj + Flèches ou les boutons −1 j / +1 j pour reporter l’échéance.';
 
   const liveRegion = document.createElement('div');
   liveRegion.id = 'calendar-live-status';
@@ -301,10 +332,40 @@ export function renderCalendarView({
 
   subBar.append(periodHeading, helpText, liveRegion);
 
-  // Prepare filtered tasks grouped by dueDate
+  // Legend differentiating Weekends (Sam/Dim) from Off-hours (18h-7h)
+  const legendBar = document.createElement('div');
+  legendBar.className = 'lc-cal-legend';
+  legendBar.setAttribute('aria-label', 'Légende de l’agenda');
+
+  const weekendLegend = document.createElement('span');
+  weekendLegend.className = 'lc-cal-legend__item lc-cal-legend__item--weekend';
+  const weekendSwatch = document.createElement('span');
+  weekendSwatch.className = 'lc-cal-legend__swatch lc-cal-legend__swatch--weekend';
+  weekendSwatch.setAttribute('aria-hidden', 'true');
+  weekendLegend.append(weekendSwatch, document.createTextNode('Samedi & dimanche (week-end)'));
+
+  const offHoursLegend = document.createElement('span');
+  offHoursLegend.className = 'lc-cal-legend__item lc-cal-legend__item--offhours';
+  const offHoursSwatch = document.createElement('span');
+  offHoursSwatch.className = 'lc-cal-legend__swatch lc-cal-legend__swatch--offhours';
+  offHoursSwatch.setAttribute('aria-hidden', 'true');
+  const legendMoon = document.createElement('i');
+  legendMoon.className = 'ph ph-moon cv-icon';
+  legendMoon.setAttribute('aria-hidden', 'true');
+  offHoursLegend.append(
+    offHoursSwatch,
+    legendMoon,
+    document.createTextNode('Créneau 18h–7h (soir et nuit)'),
+  );
+
+  legendBar.append(weekendLegend, offHoursLegend);
+
+  // Prepare filtered active tasks grouped by dueDate (and sorted by dueTime)
+  const effectiveProjectFilter =
+    selectedActiveProjectId === '__all__' ? null : selectedActiveProjectId;
   const allTasks = selectTasks(state, {
-    projectId: state.preferences.selectedProjectId,
-    sortBy: 'priority',
+    projectId: effectiveProjectFilter,
+    sortBy: 'dueDate',
   });
   /** @type {Map<string, Task[]>} */
   const tasksByDate = new Map();
@@ -322,8 +383,8 @@ export function renderCalendarView({
   }
 
   exportIcsBtn.addEventListener('click', async () => {
-    const selectedProj = state.preferences.selectedProjectId
-      ? selectProjectById(state, state.preferences.selectedProjectId)
+    const selectedProj = effectiveProjectFilter
+      ? selectProjectById(state, effectiveProjectFilter)
       : null;
     const calName = selectedProj ? `Locavern — ${selectedProj.name}` : 'Locavern — Échéances';
     const { icsContent, exportedCount } = buildTasksIcsCalendar(allTasks, state.projects, {
@@ -374,41 +435,64 @@ export function renderCalendarView({
   });
 
   const configuredStatuses = state.preferences.taskStatuses;
-  const multiProjectMode = state.preferences.selectedProjectId === null;
+  const multiProjectMode = effectiveProjectFilter === null;
 
   /**
-   * Move `taskId` to `targetDate` (YYYY-MM-DD), keeping focus if requested.
+   * Move `taskId` to `targetDate` (YYYY-MM-DD), optionally updating `dueTime`.
    * @param {string} taskId
    * @param {string} targetDate
-   * @param {boolean} [restoreFocus]
+   * @param {{ dueTime?: string | null; restoreFocus?: boolean }} [opts]
    */
-  function moveTaskToDate(taskId, targetDate, restoreFocus = false) {
+  function moveTaskToSchedule(taskId, targetDate, opts = {}) {
     if (readOnly) return;
     const task = state.tasks.find((t) => t.id === taskId);
-    if (!task || task.dueDate === targetDate) return;
-    if (restoreFocus) {
+    if (!task) return;
+    const hasExplicitTime = Object.prototype.hasOwnProperty.call(opts, 'dueTime');
+    const nextDueTime = hasExplicitTime ? (opts.dueTime ?? null) : (task.dueTime ?? null);
+    if (task.dueDate === targetDate && (task.dueTime ?? null) === nextDueTime) {
+      return;
+    }
+    if (opts.restoreFocus) {
       calendarState.focusTaskId = taskId;
       calendarState.anchorDate = targetDate;
+    }
+    /** @type {{ dueDate: string; dueTime?: string | null }} */
+    const patch = { dueDate: targetDate };
+    if (hasExplicitTime) {
+      patch.dueTime = nextDueTime;
     }
     store.dispatch({
       type: 'update_task',
       id: taskId,
-      patch: { dueDate: targetDate },
+      patch,
       now: new Date().toISOString(),
     });
-    liveRegion.textContent = `Échéance de « ${task.title} » déplacée au ${formatShortDateFr(targetDate, true)}.`;
+    const timeNote = nextDueTime ? ` à ${nextDueTime}` : '';
+    liveRegion.textContent = `Échéance de « ${task.title} » déplacée au ${formatShortDateFr(targetDate, true)}${timeNote}.`;
   }
 
   /**
-   * Create a task card element inside a calendar cell.
+   * Create a task card element inside a calendar cell or hourly slot.
    * @param {Task} task
    * @param {boolean} detailed
    * @returns {HTMLElement}
    */
   function createTaskCard(task, detailed) {
+    const terminal = isTerminalTaskStatus(task.status, configuredStatuses);
+    const offHours = isOffHoursDueTime(task.dueTime);
+
     const item = document.createElement('div');
     item.className = `lc-cal-task lc-cal-task--${task.priority}`;
+    if (terminal) {
+      item.classList.add('is-terminal');
+      item.dataset.taskTerminal = 'true';
+    }
+    if (offHours) {
+      item.classList.add('is-offhours');
+      item.dataset.calOffhours = 'true';
+    }
     item.setAttribute('data-cal-task-id', task.id);
+
     if (!readOnly) {
       item.draggable = true;
       item.addEventListener('dragstart', (event) => {
@@ -423,7 +507,7 @@ export function renderCalendarView({
         draggedTaskId = null;
         item.classList.remove('is-dragging');
         container
-          .querySelectorAll('.lc-cal-cell.is-drop-target')
+          .querySelectorAll('.is-drop-target')
           .forEach((el) => el.classList.remove('is-drop-target'));
       });
     }
@@ -437,8 +521,28 @@ export function renderCalendarView({
     const prioMeta = PRIORITY_META[task.priority];
     openBtn.setAttribute(
       'aria-label',
-      `${task.title} · Priorité ${prioMeta.label} · ${statusMeta.label}${task.dueDate ? ` · ${task.dueDate}` : ''}`,
+      `${task.title} · Priorité ${prioMeta.label} · ${statusMeta.label}${task.dueDate ? ` · ${task.dueDate}` : ''}${task.dueTime ? ` à ${task.dueTime}` : ''}${offHours ? ' (créneau 18h–7h)' : ''}`,
     );
+
+    if (task.dueTime) {
+      const timeRow = document.createElement('span');
+      timeRow.className = 'lc-cal-task__time-row';
+      const timeBadge = document.createElement('span');
+      timeBadge.className = 'lc-cal-task__time cv-num';
+      timeBadge.textContent = task.dueTime;
+      timeRow.append(timeBadge);
+
+      if (offHours) {
+        const offPill = document.createElement('span');
+        offPill.className = 'cv-badge lc-offhours-pill';
+        const mIc = document.createElement('i');
+        mIc.className = 'ph ph-moon cv-icon';
+        mIc.setAttribute('aria-hidden', 'true');
+        offPill.append(mIc, document.createTextNode(' 18h–7h'));
+        timeRow.append(offPill);
+      }
+      openBtn.append(timeRow);
+    }
 
     const titleEl = document.createElement('span');
     titleEl.className = 'lc-cal-task__title';
@@ -464,7 +568,7 @@ export function renderCalendarView({
       else if (event.key === 'ArrowDown') delta = 7;
       if (delta !== 0) {
         event.preventDefault();
-        moveTaskToDate(task.id, shiftIsoDate(task.dueDate, delta), true);
+        moveTaskToSchedule(task.id, shiftIsoDate(task.dueDate, delta), { restoreFocus: true });
       }
     });
 
@@ -481,7 +585,9 @@ export function renderCalendarView({
       minusBtn.setAttribute('aria-label', `Avancer « ${task.title} » d’un jour`);
       minusBtn.textContent = '−1 j';
       setTooltip(minusBtn, 'Avancer d’un jour');
-      minusBtn.addEventListener('click', () => moveTaskToDate(task.id, shiftIsoDate(dueDate, -1)));
+      minusBtn.addEventListener('click', () =>
+        moveTaskToSchedule(task.id, shiftIsoDate(dueDate, -1)),
+      );
 
       const plusBtn = document.createElement('button');
       plusBtn.type = 'button';
@@ -489,13 +595,46 @@ export function renderCalendarView({
       plusBtn.setAttribute('aria-label', `Reporter « ${task.title} » d’un jour`);
       plusBtn.textContent = '+1 j';
       setTooltip(plusBtn, 'Reporter d’un jour');
-      plusBtn.addEventListener('click', () => moveTaskToDate(task.id, shiftIsoDate(dueDate, 1)));
+      plusBtn.addEventListener('click', () =>
+        moveTaskToSchedule(task.id, shiftIsoDate(dueDate, 1)),
+      );
 
       shiftGroup.append(minusBtn, plusBtn);
       item.append(shiftGroup);
     }
 
     return item;
+  }
+
+  /**
+   * Wire drag-and-drop listeners onto a drop container (cell, all-day box, or hourly slot).
+   * @param {HTMLElement} targetEl
+   * @param {(taskId: string) => void} onDropTask
+   * @param {boolean} [stopProp]
+   */
+  function wireDropTarget(targetEl, onDropTask, stopProp = false) {
+    if (readOnly) return;
+    targetEl.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      if (stopProp) event.stopPropagation();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      targetEl.classList.add('is-drop-target');
+    });
+    targetEl.addEventListener('dragleave', (event) => {
+      if (!targetEl.contains(/** @type {Node | null} */ (event.relatedTarget))) {
+        targetEl.classList.remove('is-drop-target');
+      }
+    });
+    targetEl.addEventListener('drop', (event) => {
+      event.preventDefault();
+      if (stopProp) event.stopPropagation();
+      targetEl.classList.remove('is-drop-target');
+      const id = event.dataTransfer?.getData('text/plain') || draggedTaskId;
+      draggedTaskId = null;
+      if (id) {
+        onDropTask(id);
+      }
+    });
   }
 
   // Weekday header strip (visible in 7-column layout)
@@ -505,12 +644,16 @@ export function renderCalendarView({
   const weekdayRow = document.createElement('div');
   weekdayRow.className = 'lc-cal-weekdays';
   weekdayRow.setAttribute('aria-hidden', 'true');
-  for (const label of WEEKDAY_SHORT_FR) {
+  WEEKDAY_SHORT_FR.forEach((label, idx) => {
     const wd = document.createElement('div');
     wd.className = 'lc-cal-weekday';
+    if (isWeekendWeekdayIndex(idx)) {
+      wd.classList.add('is-weekend');
+      wd.dataset.calWeekend = 'true';
+    }
     wd.textContent = label;
     weekdayRow.append(wd);
-  }
+  });
 
   const grid = document.createElement('div');
   grid.className =
@@ -526,7 +669,16 @@ export function renderCalendarView({
     const cell = document.createElement('section');
     cell.className = 'lc-cal-cell';
     cell.setAttribute('data-cal-date', cellInfo.date);
-    cell.setAttribute('aria-label', formatShortDateFr(cellInfo.date, true));
+    const isWeekend = Boolean(cellInfo.isWeekend);
+    if (isWeekend) {
+      cell.classList.add('is-weekend');
+      cell.dataset.calWeekend = 'true';
+    }
+    const dayAriaLabel = isWeekend
+      ? `${formatShortDateFr(cellInfo.date, true)} (Week-end)`
+      : formatShortDateFr(cellInfo.date, true);
+    cell.setAttribute('aria-label', dayAriaLabel);
+
     if (
       calendarState.mode === 'month' &&
       'inCurrentMonth' in cellInfo &&
@@ -538,27 +690,7 @@ export function renderCalendarView({
       cell.classList.add('is-today');
     }
 
-    if (!readOnly) {
-      cell.addEventListener('dragover', (event) => {
-        event.preventDefault();
-        if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-        cell.classList.add('is-drop-target');
-      });
-      cell.addEventListener('dragleave', (event) => {
-        if (!cell.contains(/** @type {Node | null} */ (event.relatedTarget))) {
-          cell.classList.remove('is-drop-target');
-        }
-      });
-      cell.addEventListener('drop', (event) => {
-        event.preventDefault();
-        cell.classList.remove('is-drop-target');
-        const id = event.dataTransfer?.getData('text/plain') || draggedTaskId;
-        draggedTaskId = null;
-        if (id) {
-          moveTaskToDate(id, cellInfo.date, false);
-        }
-      });
-    }
+    wireDropTarget(cell, (id) => moveTaskToSchedule(id, cellInfo.date));
 
     const cellHead = document.createElement('div');
     cellHead.className = 'lc-cal-cell__head';
@@ -571,6 +703,13 @@ export function renderCalendarView({
         : `${WEEKDAY_SHORT_FR[cellInfo.weekdayIndex]} ${cellInfo.day}`;
 
     cellHead.append(dayNum);
+
+    if (isWeekend) {
+      const weekendTag = document.createElement('span');
+      weekendTag.className = 'cv-badge lc-cal-weekend-tag';
+      weekendTag.textContent = 'Week-end';
+      cellHead.append(weekendTag);
+    }
 
     if (cellInfo.date === todayIso) {
       const todayBadge = document.createElement('span');
@@ -590,18 +729,128 @@ export function renderCalendarView({
       addIc.className = 'ph ph-plus cv-icon';
       addIc.setAttribute('aria-hidden', 'true');
       addDayBtn.append(addIc);
-      addDayBtn.addEventListener('click', () => onNewTask(cellInfo.date));
+      addDayBtn.addEventListener('click', () => onNewTask(cellInfo.date, null));
       cellHead.append(addDayBtn);
     }
 
-    const cellList = document.createElement('div');
-    cellList.className = 'lc-cal-cell__tasks';
     const dayTasks = tasksByDate.get(cellInfo.date) ?? [];
-    for (const task of dayTasks) {
-      cellList.append(createTaskCard(task, calendarState.mode === 'week'));
+
+    if (calendarState.mode === 'month') {
+      const cellList = document.createElement('div');
+      cellList.className = 'lc-cal-cell__tasks';
+      for (const task of dayTasks) {
+        cellList.append(createTaskCard(task, false));
+      }
+      cell.append(cellHead, cellList);
+    } else {
+      // Week view: All-day / untimed section + 24h hourly schedule highlighting 18h–7h
+      /** @type {Task[]} */
+      const alldayTasks = [];
+      /** @type {Map<number, Task[]>} */
+      const tasksByHour = new Map();
+      for (const task of dayTasks) {
+        const parsedTime = parseTimeHhMm(task.dueTime);
+        if (!parsedTime) {
+          alldayTasks.push(task);
+        } else {
+          const list = tasksByHour.get(parsedTime.hour) ?? [];
+          list.push(task);
+          tasksByHour.set(parsedTime.hour, list);
+        }
+      }
+
+      const alldayBox = document.createElement('div');
+      alldayBox.className = 'lc-cal-allday';
+      alldayBox.dataset.calAllday = 'true';
+      wireDropTarget(
+        alldayBox,
+        (id) => moveTaskToSchedule(id, cellInfo.date, { dueTime: null }),
+        true,
+      );
+
+      const alldayHead = document.createElement('div');
+      alldayHead.className = 'lc-cal-allday__head';
+      alldayHead.textContent = 'Sans heure';
+      const alldayList = document.createElement('div');
+      alldayList.className = 'lc-cal-cell__tasks';
+      for (const t of alldayTasks) {
+        alldayList.append(createTaskCard(t, true));
+      }
+      alldayBox.append(alldayHead, alldayList);
+
+      const slotsWrap = document.createElement('div');
+      slotsWrap.className = 'lc-cal-slots';
+
+      for (let hour = 0; hour < 24; hour += 1) {
+        const hh = String(hour).padStart(2, '0');
+        const slotTime = `${hh}:00`;
+        const offHours = isOffHoursHour(hour);
+
+        const slot = document.createElement('div');
+        slot.className = offHours
+          ? 'lc-cal-slot lc-cal-slot--offhours'
+          : 'lc-cal-slot lc-cal-slot--daytime';
+        if (hour === 7 || hour === 18) {
+          slot.classList.add('lc-cal-slot--boundary');
+        }
+        slot.dataset.calHour = hh;
+        slot.dataset.calOffhours = offHours ? 'true' : 'false';
+
+        wireDropTarget(
+          slot,
+          (id) => moveTaskToSchedule(id, cellInfo.date, { dueTime: slotTime }),
+          true,
+        );
+
+        const slotHead = document.createElement('div');
+        slotHead.className = 'lc-cal-slot__head';
+
+        const hourLabel = document.createElement('span');
+        hourLabel.className = 'lc-cal-slot__hour cv-num';
+        hourLabel.textContent = slotTime;
+        slotHead.append(hourLabel);
+
+        if (offHours && (hour === 0 || hour === 18)) {
+          const bandTag = document.createElement('span');
+          bandTag.className = 'cv-badge lc-offhours-pill';
+          const moonIc = document.createElement('i');
+          moonIc.className = 'ph ph-moon cv-icon';
+          moonIc.setAttribute('aria-hidden', 'true');
+          bandTag.append(moonIc, document.createTextNode(' 18h–7h'));
+          slotHead.append(bandTag);
+        }
+
+        if (!readOnly) {
+          const addSlotBtn = document.createElement('button');
+          addSlotBtn.type = 'button';
+          addSlotBtn.className = 'cv-btn cv-btn--ghost cv-btn--icon cv-btn--sm lc-cal-slot__add';
+          const slotLabel = offHours
+            ? `Ajouter une tâche le ${formatShortDateFr(cellInfo.date, true)} à ${slotTime} (créneau 18h–7h)`
+            : `Ajouter une tâche le ${formatShortDateFr(cellInfo.date, true)} à ${slotTime}`;
+          addSlotBtn.setAttribute('aria-label', slotLabel);
+          setTooltip(addSlotBtn, `Planifier à ${slotTime}`);
+          const addIc = document.createElement('i');
+          addIc.className = 'ph ph-plus cv-icon';
+          addIc.setAttribute('aria-hidden', 'true');
+          addSlotBtn.append(addIc);
+          addSlotBtn.addEventListener('click', () => onNewTask(cellInfo.date, slotTime));
+          slotHead.append(addSlotBtn);
+        }
+
+        const slotTasks = tasksByHour.get(hour) ?? [];
+        const slotList = document.createElement('div');
+        slotList.className = 'lc-cal-slot__tasks';
+        for (const t of slotTasks) {
+          slotList.append(createTaskCard(t, true));
+        }
+
+        slot.append(slotHead, slotList);
+        slotsWrap.append(slot);
+      }
+
+      cell.append(cellHead, alldayBox, slotsWrap);
     }
 
-    cell.append(cellHead, cellList);
     grid.append(cell);
   }
 
@@ -655,7 +904,7 @@ export function renderCalendarView({
         planTodayBtn.className = 'cv-btn cv-btn--ghost cv-btn--sm';
         planTodayBtn.setAttribute('aria-label', `Planifier « ${task.title} » aujourd’hui`);
         planTodayBtn.textContent = 'Planifier aujourd’hui';
-        planTodayBtn.addEventListener('click', () => moveTaskToDate(task.id, todayIso, false));
+        planTodayBtn.addEventListener('click', () => moveTaskToSchedule(task.id, todayIso));
         chip.append(planTodayBtn);
       }
 
@@ -664,7 +913,7 @@ export function renderCalendarView({
   }
   undatedSection.append(undatedHead, undatedList);
 
-  container.replaceChildren(header, subBar, gridWrapper, undatedSection);
+  container.replaceChildren(header, subBar, legendBar, gridWrapper, undatedSection);
   initTooltips(container);
 
   // Restore focus after keyboard rescheduling

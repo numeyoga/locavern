@@ -15,10 +15,14 @@ import {
   createProject,
   createTask,
   createWhiteboard,
+  getDefaultInitialTaskStatusId,
+  inferLegacyTaskStatusRoles,
+  isTerminalTaskStatus,
   normalizeChecklist,
   normalizeLocalRefs,
   normalizeTags,
   normalizeDueDate,
+  normalizeDueTime,
   normalizeInputPresentations,
   normalizeTaskRecurrence,
   normalizeTaskStatuses,
@@ -85,9 +89,136 @@ export function createInitialState() {
 function areTaskStatusesEqual(a, b) {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i += 1) {
-    if (a[i]?.id !== b[i]?.id || a[i]?.label !== b[i]?.label) return false;
+    if (
+      a[i]?.id !== b[i]?.id ||
+      a[i]?.label !== b[i]?.label ||
+      Boolean(a[i]?.isInitial) !== Boolean(b[i]?.isInitial) ||
+      Boolean(a[i]?.isTerminal) !== Boolean(b[i]?.isTerminal)
+    ) {
+      return false;
+    }
   }
   return true;
+}
+
+/**
+ * Return true if the given projectId belongs to an archived project.
+ * @param {readonly Project[]} projects
+ * @param {string | null | undefined} projectId
+ * @returns {boolean}
+ */
+function isProjectArchivedById(projects, projectId) {
+  if (!projectId) return false;
+  return Boolean(projects.find((p) => p.id === projectId)?.archived);
+}
+
+/**
+ * Return true if a task is archived either directly or via its parent project.
+ * @param {Task} task
+ * @param {readonly Project[]} projects
+ * @returns {boolean}
+ */
+export function isTaskEffectivelyArchived(task, projects) {
+  return Boolean(task.archived || isProjectArchivedById(projects, task.projectId));
+}
+
+/**
+ * Return true if a note is archived either directly or via its parent project.
+ * @param {Note} note
+ * @param {readonly Project[]} projects
+ * @returns {boolean}
+ */
+export function isNoteEffectivelyArchived(note, projects) {
+  return Boolean(
+    note.archived || (note.projectId !== null && isProjectArchivedById(projects, note.projectId)),
+  );
+}
+
+/**
+ * Return true if a whiteboard is archived either directly or via its parent project.
+ * @param {Whiteboard} whiteboard
+ * @param {readonly Project[]} projects
+ * @returns {boolean}
+ */
+export function isWhiteboardEffectivelyArchived(whiteboard, projects) {
+  return Boolean(
+    whiteboard.archived ||
+    (whiteboard.projectId !== null && isProjectArchivedById(projects, whiteboard.projectId)),
+  );
+}
+
+/**
+ * Validate that newly added links do not involve a terminal-status task or an archived element.
+ * Existing unchanged links remain readable even if the target later becomes terminal or archived.
+ * @param {readonly LocalRef[]} candidateLinks
+ * @param {readonly LocalRef[]} existingLinks
+ * @param {AppState} state
+ * @param {boolean} sourceIsTerminalTask
+ */
+function assertAllowedNewLinks(candidateLinks, existingLinks, state, sourceIsTerminalTask) {
+  const existingKeys = new Set(existingLinks.map((ref) => `${ref.kind}:${ref.id}`));
+  const addedLinks = candidateLinks.filter((ref) => !existingKeys.has(`${ref.kind}:${ref.id}`));
+  if (addedLinks.length === 0) return;
+
+  if (sourceIsTerminalTask) {
+    throw new Error('Une tâche au statut terminal ne peut plus créer de nouveaux liens.');
+  }
+
+  for (const ref of addedLinks) {
+    if (ref.kind === 'task') {
+      const target = state.tasks.find((t) => t.id === ref.id);
+      if (target) {
+        if (isTerminalTaskStatus(target.status, state.preferences.taskStatuses)) {
+          throw new Error('Impossible de lier une tâche ayant un statut terminal.');
+        }
+        if (isTaskEffectivelyArchived(target, state.projects)) {
+          throw new Error('Impossible de lier un élément archivé.');
+        }
+      }
+    } else if (ref.kind === 'note') {
+      const target = state.notes.find((n) => n.id === ref.id);
+      if (target && isNoteEffectivelyArchived(target, state.projects)) {
+        throw new Error('Impossible de lier un élément archivé.');
+      }
+    } else if (ref.kind === 'whiteboard') {
+      const target = state.whiteboards.find((w) => w.id === ref.id);
+      if (target && isWhiteboardEffectivelyArchived(target, state.projects)) {
+        throw new Error('Impossible de lier un élément archivé.');
+      }
+    }
+  }
+}
+
+/**
+ * Strip archivedAt (and archived) cleanly when unarchiving an entity.
+ * @template {{ archived?: boolean; archivedAt?: string }} T
+ * @param {T} entity
+ * @param {boolean} archived
+ * @param {string} now
+ * @returns {T}
+ */
+function withEntityArchivedState(entity, archived, now) {
+  const { archived: _a, archivedAt: _at, ...rest } = entity;
+  if (!archived) {
+    return /** @type {T} */ (
+      /** @type {unknown} */ (
+        Object.freeze({
+          ...rest,
+          updatedAt: now,
+        })
+      )
+    );
+  }
+  return /** @type {T} */ (
+    /** @type {unknown} */ (
+      Object.freeze({
+        ...rest,
+        archived: true,
+        archivedAt: now,
+        updatedAt: now,
+      })
+    )
+  );
 }
 
 /**
@@ -231,7 +362,10 @@ function pruneDeletedLinks(collections, removedKeys) {
 function buildNextRecurringTask(completedTask, currentTasks, configuredStatuses, opts) {
   const recurrence = normalizeTaskRecurrence(completedTask.recurrence);
   if (!recurrence) return null;
-  const initialStatus = configuredStatuses.find((s) => s.id !== 'done')?.id ?? null;
+  const initialStatus =
+    configuredStatuses.find((s) => s.isInitial === true)?.id ??
+    configuredStatuses.find((s) => s.isTerminal !== true)?.id ??
+    null;
   const nextDueDate = computeNextRecurrenceDueDate(
     completedTask.dueDate,
     recurrence,
@@ -260,6 +394,11 @@ function buildNextRecurringTask(completedTask, currentTasks, configuredStatuses,
     (t) => t.projectId === completedTask.projectId && t.status === initialStatus,
   ).length;
   const allowedStatuses = configuredStatuses.map((s) => s.id);
+  const filteredLinks = (completedTask.links ?? []).filter((ref) => {
+    if (ref.kind !== 'task') return true;
+    const target = currentTasks.find((t) => t.id === ref.id);
+    return !target || !isTerminalTaskStatus(target.status, configuredStatuses);
+  });
   return createTask({
     id: nextId,
     projectId: completedTask.projectId,
@@ -267,12 +406,13 @@ function buildNextRecurringTask(completedTask, currentTasks, configuredStatuses,
     status: initialStatus,
     priority: completedTask.priority,
     dueDate: nextDueDate,
+    dueTime: nextDueDate ? (completedTask.dueTime ?? null) : null,
     recurrence,
     position,
     descriptionDoc: structuredClone(completedTask.descriptionDoc),
     checklist: nextChecklist,
     tags: [...(completedTask.tags ?? [])],
-    links: [...(completedTask.links ?? [])],
+    links: filteredLinks,
     assetIds: [...completedTask.assetIds],
     allowedStatuses,
     now: opts.now,
@@ -291,7 +431,16 @@ export function reduce(state, command) {
       const inputPresentations = normalizeInputPresentations(
         command.payload.preferences?.inputPresentations,
       );
-      const taskStatuses = normalizeTaskStatuses(command.payload.preferences?.taskStatuses);
+      const rawStatuses = command.payload.preferences?.taskStatuses;
+      const normalizedStatuses = normalizeTaskStatuses(rawStatuses);
+      const hasRolesConfigured = Boolean(
+        /** @type {Record<string, unknown> | undefined} */ (command.payload.preferences)
+          ?.statusRolesConfigured,
+      );
+      const taskStatuses =
+        Array.isArray(rawStatuses) && !hasRolesConfigured
+          ? inferLegacyTaskStatusRoles(normalizedStatuses)
+          : normalizedStatuses;
       const toastDurationSeconds = normalizeToastDurationSeconds(
         command.payload.preferences?.toastDurationSeconds,
       );
@@ -463,7 +612,11 @@ export function reduce(state, command) {
       if (areTaskStatusesEqual(state.preferences.taskStatuses, nextStatuses)) {
         return { nextState: state, effects: [] };
       }
-      const preferences = { ...state.preferences, taskStatuses: nextStatuses };
+      const preferences = {
+        ...state.preferences,
+        taskStatuses: nextStatuses,
+        statusRolesConfigured: true,
+      };
       return {
         nextState: { ...state, preferences },
         effects: [{ type: 'persist_preferences', preferences }],
@@ -477,7 +630,12 @@ export function reduce(state, command) {
         description: command.description ?? '',
         now: command.now,
       });
-      const selectedProjectId = state.preferences.selectedProjectId ?? project.id;
+      const currentSelectedValid =
+        state.preferences.selectedProjectId !== null &&
+        state.projects.some((p) => p.id === state.preferences.selectedProjectId && !p.archived);
+      const selectedProjectId = currentSelectedValid
+        ? state.preferences.selectedProjectId
+        : project.id;
       const preferences =
         selectedProjectId !== state.preferences.selectedProjectId
           ? { ...state.preferences, selectedProjectId }
@@ -520,17 +678,61 @@ export function reduce(state, command) {
     case 'toggle_archive_project': {
       const existing = state.projects.find((p) => p.id === command.id);
       if (!existing) return { nextState: state, effects: [] };
+      const { archivedAt: _prevArchivedAt, ...baseProject } = existing;
       const updated = Object.freeze({
-        ...existing,
-        archived: command.archived,
+        ...baseProject,
+        archived: Boolean(command.archived),
+        ...(command.archived ? { archivedAt: command.now } : {}),
         updatedAt: command.now,
       });
+      const nextProjects = state.projects.map((p) => (p.id === command.id ? updated : p));
+      let nextSelectedProjectId = state.preferences.selectedProjectId;
+      if (command.archived && nextSelectedProjectId === command.id) {
+        nextSelectedProjectId = nextProjects.find((p) => !p.archived)?.id ?? null;
+      } else if (!command.archived && nextSelectedProjectId === null) {
+        nextSelectedProjectId = command.id;
+      }
+      let nextSelectedNoteId = state.preferences.selectedNoteId;
+      if (command.archived && nextSelectedNoteId) {
+        const selectedNote = state.notes.find((n) => n.id === nextSelectedNoteId);
+        if (selectedNote && isNoteEffectivelyArchived(selectedNote, nextProjects)) {
+          nextSelectedNoteId =
+            state.notes.find((n) => !isNoteEffectivelyArchived(n, nextProjects))?.id ?? null;
+        }
+      }
+      let nextSelectedWbId = state.preferences.selectedWhiteboardId;
+      if (command.archived && nextSelectedWbId) {
+        const selectedWb = state.whiteboards.find((w) => w.id === nextSelectedWbId);
+        if (selectedWb && isWhiteboardEffectivelyArchived(selectedWb, nextProjects)) {
+          nextSelectedWbId =
+            state.whiteboards.find((w) => !isWhiteboardEffectivelyArchived(w, nextProjects))?.id ??
+            null;
+        }
+      }
+      const prefsChanged =
+        nextSelectedProjectId !== state.preferences.selectedProjectId ||
+        nextSelectedNoteId !== state.preferences.selectedNoteId ||
+        nextSelectedWbId !== state.preferences.selectedWhiteboardId;
+      const preferences = prefsChanged
+        ? {
+            ...state.preferences,
+            selectedProjectId: nextSelectedProjectId,
+            selectedNoteId: nextSelectedNoteId,
+            selectedWhiteboardId: nextSelectedWbId,
+          }
+        : state.preferences;
+      /** @type {StoreEffect[]} */
+      const effects = [{ type: 'persist_project', project: updated }];
+      if (prefsChanged) {
+        effects.push({ type: 'persist_preferences', preferences });
+      }
       return {
         nextState: {
           ...state,
-          projects: state.projects.map((p) => (p.id === command.id ? updated : p)),
+          projects: nextProjects,
+          preferences,
         },
-        effects: [{ type: 'persist_project', project: updated }],
+        effects,
       };
     }
 
@@ -571,9 +773,14 @@ export function reduce(state, command) {
       const finalUpdatedWbsMap = new Map(updatedWhiteboards.map((w) => [w.id, w]));
       for (const cw of pruned.changedWhiteboards) finalUpdatedWbsMap.set(cw.id, cw);
 
-      const preferences =
+      const remainingProjects = state.projects.filter((p) => p.id !== command.id);
+      const nextSelectedProjectId =
         state.preferences.selectedProjectId === command.id
-          ? { ...state.preferences, selectedProjectId: null }
+          ? (remainingProjects.find((p) => !p.archived)?.id ?? null)
+          : state.preferences.selectedProjectId;
+      const preferences =
+        nextSelectedProjectId !== state.preferences.selectedProjectId
+          ? { ...state.preferences, selectedProjectId: nextSelectedProjectId }
           : state.preferences;
       /** @type {StoreEffect[]} */
       const effects = [
@@ -594,7 +801,7 @@ export function reduce(state, command) {
       return {
         nextState: {
           ...state,
-          projects: state.projects.filter((p) => p.id !== command.id),
+          projects: remainingProjects,
           tasks: pruned.tasks,
           notes: pruned.notes,
           whiteboards: pruned.whiteboards,
@@ -610,7 +817,7 @@ export function reduce(state, command) {
         throw new Error('Le projet sélectionné est introuvable.');
       }
       const allowedStatuses = state.preferences.taskStatuses.map((s) => s.id);
-      const defaultStatus = state.preferences.taskStatuses[0]?.id ?? null;
+      const defaultStatus = getDefaultInitialTaskStatusId(state.preferences.taskStatuses);
       const targetStatus =
         command.status === undefined
           ? defaultStatus
@@ -627,6 +834,7 @@ export function reduce(state, command) {
         status: targetStatus,
         priority: command.priority ?? 'medium',
         dueDate: command.dueDate ?? null,
+        dueTime: command.dueTime ?? null,
         recurrence: command.recurrence ?? null,
         position: columnCount,
         descriptionDoc: command.descriptionDoc,
@@ -637,6 +845,12 @@ export function reduce(state, command) {
         allowedStatuses,
         now: command.now,
       });
+      assertAllowedNewLinks(
+        task.links ?? [],
+        [],
+        state,
+        isTerminalTaskStatus(task.status, state.preferences.taskStatuses),
+      );
       return {
         nextState: {
           ...state,
@@ -692,22 +906,35 @@ export function reduce(state, command) {
         command.patch.links !== undefined
           ? normalizeLocalRefs(command.patch.links, { kind: 'task', id: existing.id })
           : (existing.links ?? []);
+      assertAllowedNewLinks(
+        nextLinks,
+        existing.links ?? [],
+        state,
+        isTerminalTaskStatus(nextStatus, state.preferences.taskStatuses),
+      );
+      const nextDueDate =
+        command.patch.dueDate !== undefined
+          ? normalizeDueDate(command.patch.dueDate)
+          : existing.dueDate;
+      const rawNextDueTime =
+        command.patch.dueTime !== undefined
+          ? normalizeDueTime(command.patch.dueTime)
+          : (existing.dueTime ?? null);
+      const nextDueTime = nextDueDate ? rawNextDueTime : null;
       const nextRecurrence =
         command.patch.recurrence !== undefined
           ? normalizeTaskRecurrence(command.patch.recurrence)
           : normalizeTaskRecurrence(existing.recurrence);
 
-      const { recurrence: _prevRec, ...existingBase } = existing;
+      const { recurrence: _prevRec, dueTime: _prevTime, ...existingBase } = existing;
       const updatedTask = Object.freeze({
         ...existingBase,
         projectId: nextProjectId,
         title: nextTitle.slice(0, 200),
         status: nextStatus,
         priority: nextPriority,
-        dueDate:
-          command.patch.dueDate !== undefined
-            ? normalizeDueDate(command.patch.dueDate)
-            : existing.dueDate,
+        dueDate: nextDueDate,
+        ...(nextDueTime ? { dueTime: nextDueTime } : {}),
         ...(nextRecurrence ? { recurrence: nextRecurrence } : {}),
         position: nextPosition,
         descriptionDoc: nextDoc,
@@ -722,14 +949,17 @@ export function reduce(state, command) {
       });
 
       let replaced = state.tasks.map((t) => (t.id === command.id ? updatedTask : t));
-      const completedNow = existing.status !== 'done' && nextStatus === 'done';
-      const spawned = completedNow
-        ? buildNextRecurringTask(updatedTask, replaced, state.preferences.taskStatuses, {
-            nextOccurrenceId: command.nextOccurrenceId,
-            todayIso: command.todayIso,
-            now: command.now,
-          })
-        : null;
+      const completedNow =
+        !isTerminalTaskStatus(existing.status, state.preferences.taskStatuses) &&
+        isTerminalTaskStatus(nextStatus, state.preferences.taskStatuses);
+      const spawned =
+        completedNow && !isTaskEffectivelyArchived(updatedTask, state.projects)
+          ? buildNextRecurringTask(updatedTask, replaced, state.preferences.taskStatuses, {
+              nextOccurrenceId: command.nextOccurrenceId,
+              todayIso: command.todayIso,
+              now: command.now,
+            })
+          : null;
       if (spawned) {
         replaced = [...replaced, spawned];
       }
@@ -757,6 +987,50 @@ export function reduce(state, command) {
             ? { type: 'persist_task', task: updatedTask }
             : { type: 'persist_tasks', tasks: persisted },
         ],
+      };
+    }
+
+    case 'toggle_archive_task': {
+      const existing = state.tasks.find((t) => t.id === command.id);
+      if (!existing) return { nextState: state, effects: [] };
+      const updatedTask = withEntityArchivedState(existing, command.archived, command.now);
+      let nextProjects = state.projects;
+      /** @type {Project | null} */
+      let unarchivedParent = null;
+      if (!command.archived) {
+        const parent = state.projects.find((p) => p.id === existing.projectId);
+        if (parent?.archived) {
+          const { archivedAt: _pa, ...parentRest } = parent;
+          unarchivedParent = Object.freeze({
+            ...parentRest,
+            archived: false,
+            updatedAt: command.now,
+          });
+          nextProjects = state.projects.map((p) =>
+            p.id === parent.id ? /** @type {Project} */ (unarchivedParent) : p,
+          );
+        }
+      }
+      let preferences = state.preferences;
+      if (unarchivedParent && preferences.selectedProjectId === null) {
+        preferences = { ...preferences, selectedProjectId: unarchivedParent.id };
+      }
+      /** @type {StoreEffect[]} */
+      const effects = [{ type: 'persist_task', task: updatedTask }];
+      if (unarchivedParent) {
+        effects.push({ type: 'persist_project', project: unarchivedParent });
+      }
+      if (preferences !== state.preferences) {
+        effects.push({ type: 'persist_preferences', preferences });
+      }
+      return {
+        nextState: {
+          ...state,
+          projects: nextProjects,
+          tasks: state.tasks.map((t) => (t.id === command.id ? updatedTask : t)),
+          preferences,
+        },
+        effects,
       };
     }
 
@@ -801,14 +1075,17 @@ export function reduce(state, command) {
 
       let nextTasks = state.tasks.map((t) => nextMap.get(t.id) ?? t);
       const changedTasks = nextTasks.filter((t, i) => t !== state.tasks[i]);
-      const completedNow = task.status !== 'done' && command.targetStatus === 'done';
-      const spawned = completedNow
-        ? buildNextRecurringTask(movedTask, nextTasks, state.preferences.taskStatuses, {
-            nextOccurrenceId: command.nextOccurrenceId,
-            todayIso: command.todayIso,
-            now: command.now,
-          })
-        : null;
+      const completedNow =
+        !isTerminalTaskStatus(task.status, state.preferences.taskStatuses) &&
+        isTerminalTaskStatus(command.targetStatus, state.preferences.taskStatuses);
+      const spawned =
+        completedNow && !isTaskEffectivelyArchived(movedTask, state.projects)
+          ? buildNextRecurringTask(movedTask, nextTasks, state.preferences.taskStatuses, {
+              nextOccurrenceId: command.nextOccurrenceId,
+              todayIso: command.todayIso,
+              now: command.now,
+            })
+          : null;
       if (spawned) {
         nextTasks = [...nextTasks, spawned];
         changedTasks.push(spawned);
@@ -868,6 +1145,7 @@ export function reduce(state, command) {
         assetIds: command.assetIds,
         now: command.now,
       });
+      assertAllowedNewLinks(note.links ?? [], [], state, false);
       const preferences = { ...state.preferences, selectedNoteId: note.id };
       return {
         nextState: {
@@ -905,6 +1183,7 @@ export function reduce(state, command) {
         command.patch.links !== undefined
           ? normalizeLocalRefs(command.patch.links, { kind: 'note', id: existing.id })
           : (existing.links ?? []);
+      assertAllowedNewLinks(nextLinks, existing.links ?? [], state, false);
       const derivedAssets = collectDocAssetIds(nextDoc);
       const nextAssets = [...new Set([...(command.patch.assetIds ?? []), ...derivedAssets])];
 
@@ -928,6 +1207,68 @@ export function reduce(state, command) {
       };
     }
 
+    case 'toggle_archive_note': {
+      const existing = state.notes.find((n) => n.id === command.id);
+      if (!existing) return { nextState: state, effects: [] };
+      const updatedNote = withEntityArchivedState(existing, command.archived, command.now);
+      let nextProjects = state.projects;
+      /** @type {Project | null} */
+      let unarchivedParent = null;
+      if (!command.archived && existing.projectId) {
+        const parent = state.projects.find((p) => p.id === existing.projectId);
+        if (parent?.archived) {
+          const { archivedAt: _pa, ...parentRest } = parent;
+          unarchivedParent = Object.freeze({
+            ...parentRest,
+            archived: false,
+            updatedAt: command.now,
+          });
+          nextProjects = state.projects.map((p) =>
+            p.id === parent.id ? /** @type {Project} */ (unarchivedParent) : p,
+          );
+        }
+      }
+      const nextNotes = state.notes.map((n) => (n.id === command.id ? updatedNote : n));
+      let nextSelectedNoteId = state.preferences.selectedNoteId;
+      if (command.archived && nextSelectedNoteId === command.id) {
+        nextSelectedNoteId =
+          nextNotes.find((n) => !isNoteEffectivelyArchived(n, nextProjects))?.id ?? null;
+      } else if (!command.archived) {
+        nextSelectedNoteId = command.id;
+      }
+      const nextSelectedProjectId =
+        unarchivedParent && state.preferences.selectedProjectId === null
+          ? unarchivedParent.id
+          : state.preferences.selectedProjectId;
+      const prefsChanged =
+        nextSelectedNoteId !== state.preferences.selectedNoteId ||
+        nextSelectedProjectId !== state.preferences.selectedProjectId;
+      const preferences = prefsChanged
+        ? {
+            ...state.preferences,
+            selectedNoteId: nextSelectedNoteId,
+            selectedProjectId: nextSelectedProjectId,
+          }
+        : state.preferences;
+      /** @type {StoreEffect[]} */
+      const effects = [{ type: 'persist_note', note: updatedNote }];
+      if (unarchivedParent) {
+        effects.push({ type: 'persist_project', project: unarchivedParent });
+      }
+      if (prefsChanged) {
+        effects.push({ type: 'persist_preferences', preferences });
+      }
+      return {
+        nextState: {
+          ...state,
+          projects: nextProjects,
+          notes: nextNotes,
+          preferences,
+        },
+        effects,
+      };
+    }
+
     case 'delete_note': {
       if (!state.notes.some((n) => n.id === command.id)) {
         return { nextState: state, effects: [] };
@@ -939,7 +1280,7 @@ export function reduce(state, command) {
       );
       const nextSelectedNoteId =
         state.preferences.selectedNoteId === command.id
-          ? (pruned.notes[0]?.id ?? null)
+          ? (pruned.notes.find((n) => !isNoteEffectivelyArchived(n, state.projects))?.id ?? null)
           : state.preferences.selectedNoteId;
       const preferences =
         nextSelectedNoteId !== state.preferences.selectedNoteId
@@ -985,6 +1326,7 @@ export function reduce(state, command) {
         assetIds: command.assetIds,
         now: command.now,
       });
+      assertAllowedNewLinks(whiteboard.links ?? [], [], state, false);
       const preferences = { ...state.preferences, selectedWhiteboardId: whiteboard.id };
       return {
         nextState: {
@@ -1022,6 +1364,7 @@ export function reduce(state, command) {
         command.patch.links !== undefined
           ? normalizeLocalRefs(command.patch.links, { kind: 'whiteboard', id: existing.id })
           : (existing.links ?? []);
+      assertAllowedNewLinks(nextLinks, existing.links ?? [], state, false);
       const derivedAssets = collectWhiteboardAssetIds(nextElements);
       const nextAssets = [
         ...new Set([
@@ -1051,6 +1394,69 @@ export function reduce(state, command) {
       };
     }
 
+    case 'toggle_archive_whiteboard': {
+      const existing = state.whiteboards.find((w) => w.id === command.id);
+      if (!existing) return { nextState: state, effects: [] };
+      const updatedWb = withEntityArchivedState(existing, command.archived, command.now);
+      let nextProjects = state.projects;
+      /** @type {Project | null} */
+      let unarchivedParent = null;
+      if (!command.archived && existing.projectId) {
+        const parent = state.projects.find((p) => p.id === existing.projectId);
+        if (parent?.archived) {
+          const { archivedAt: _pa, ...parentRest } = parent;
+          unarchivedParent = Object.freeze({
+            ...parentRest,
+            archived: false,
+            updatedAt: command.now,
+          });
+          nextProjects = state.projects.map((p) =>
+            p.id === parent.id ? /** @type {Project} */ (unarchivedParent) : p,
+          );
+        }
+      }
+      const nextWhiteboards = state.whiteboards.map((w) => (w.id === command.id ? updatedWb : w));
+      let nextSelectedWbId = state.preferences.selectedWhiteboardId;
+      if (command.archived && nextSelectedWbId === command.id) {
+        nextSelectedWbId =
+          nextWhiteboards.find((w) => !isWhiteboardEffectivelyArchived(w, nextProjects))?.id ??
+          null;
+      } else if (!command.archived) {
+        nextSelectedWbId = command.id;
+      }
+      const nextSelectedProjectId =
+        unarchivedParent && state.preferences.selectedProjectId === null
+          ? unarchivedParent.id
+          : state.preferences.selectedProjectId;
+      const prefsChanged =
+        nextSelectedWbId !== state.preferences.selectedWhiteboardId ||
+        nextSelectedProjectId !== state.preferences.selectedProjectId;
+      const preferences = prefsChanged
+        ? {
+            ...state.preferences,
+            selectedWhiteboardId: nextSelectedWbId,
+            selectedProjectId: nextSelectedProjectId,
+          }
+        : state.preferences;
+      /** @type {StoreEffect[]} */
+      const effects = [{ type: 'persist_whiteboard', whiteboard: updatedWb }];
+      if (unarchivedParent) {
+        effects.push({ type: 'persist_project', project: unarchivedParent });
+      }
+      if (prefsChanged) {
+        effects.push({ type: 'persist_preferences', preferences });
+      }
+      return {
+        nextState: {
+          ...state,
+          projects: nextProjects,
+          whiteboards: nextWhiteboards,
+          preferences,
+        },
+        effects,
+      };
+    }
+
     case 'delete_whiteboard': {
       if (!state.whiteboards.some((w) => w.id === command.id)) {
         return { nextState: state, effects: [] };
@@ -1062,7 +1468,8 @@ export function reduce(state, command) {
       );
       const nextSelectedWhiteboardId =
         state.preferences.selectedWhiteboardId === command.id
-          ? (pruned.whiteboards[0]?.id ?? null)
+          ? (pruned.whiteboards.find((w) => !isWhiteboardEffectivelyArchived(w, state.projects))
+              ?.id ?? null)
           : state.preferences.selectedWhiteboardId;
       const preferences =
         nextSelectedWhiteboardId !== state.preferences.selectedWhiteboardId
@@ -1137,10 +1544,15 @@ export function reduce(state, command) {
         tasks: Object.freeze(projectTasks),
         assetIds: Object.freeze([...assetSet]),
       });
+      const remainingProjects = state.projects.filter((p) => p.id !== command.id);
       const remainingTasks = state.tasks.filter((t) => t.projectId !== command.id);
-      const preferences =
+      const nextSelectedProjectId =
         state.preferences.selectedProjectId === command.id
-          ? { ...state.preferences, selectedProjectId: null }
+          ? (remainingProjects.find((p) => !p.archived)?.id ?? null)
+          : state.preferences.selectedProjectId;
+      const preferences =
+        nextSelectedProjectId !== state.preferences.selectedProjectId
+          ? { ...state.preferences, selectedProjectId: nextSelectedProjectId }
           : state.preferences;
       /** @type {StoreEffect[]} */
       const effects = [
@@ -1159,7 +1571,7 @@ export function reduce(state, command) {
       return {
         nextState: {
           ...state,
-          projects: state.projects.filter((p) => p.id !== command.id),
+          projects: remainingProjects,
           tasks: remainingTasks,
           notes: nextNotes,
           whiteboards: nextWhiteboards,
@@ -1229,7 +1641,7 @@ export function reduce(state, command) {
       const nextNotes = state.notes.filter((n) => n.id !== command.id);
       const nextSelectedNoteId =
         state.preferences.selectedNoteId === command.id
-          ? (nextNotes[0]?.id ?? null)
+          ? (nextNotes.find((n) => !isNoteEffectivelyArchived(n, state.projects))?.id ?? null)
           : state.preferences.selectedNoteId;
       const preferences =
         nextSelectedNoteId !== state.preferences.selectedNoteId
@@ -1276,7 +1688,8 @@ export function reduce(state, command) {
       const nextWhiteboards = state.whiteboards.filter((w) => w.id !== command.id);
       const nextSelectedWhiteboardId =
         state.preferences.selectedWhiteboardId === command.id
-          ? (nextWhiteboards[0]?.id ?? null)
+          ? (nextWhiteboards.find((w) => !isWhiteboardEffectivelyArchived(w, state.projects))?.id ??
+            null)
           : state.preferences.selectedWhiteboardId;
       const preferences =
         nextSelectedWhiteboardId !== state.preferences.selectedWhiteboardId
@@ -1326,7 +1739,7 @@ export function reduce(state, command) {
           });
         });
         const preferences =
-          state.preferences.selectedProjectId === null
+          state.preferences.selectedProjectId === null && !restoredProject.archived
             ? { ...state.preferences, selectedProjectId: restoredProjectId }
             : state.preferences;
         /** @type {StoreEffect[]} */
@@ -1356,7 +1769,7 @@ export function reduce(state, command) {
         const activeProjectExists = state.projects.some((p) => p.id === item.task?.projectId);
         const targetProjectId = activeProjectExists
           ? item.task.projectId
-          : (state.projects[0]?.id ?? null);
+          : (state.projects.find((p) => !p.archived)?.id ?? state.projects[0]?.id ?? null);
         if (!targetProjectId) {
           throw new Error(
             'Impossible de restaurer cette tâche : créez ou restaurez d’abord un projet actif.',
@@ -1398,7 +1811,17 @@ export function reduce(state, command) {
           projectId: activeProjectExists ? item.note.projectId : null,
           updatedAt: command.now,
         });
-        const preferences = { ...state.preferences, selectedNoteId: restoredNoteId };
+        const preferences = !isNoteEffectivelyArchived(restoredNote, state.projects)
+          ? { ...state.preferences, selectedNoteId: restoredNoteId }
+          : state.preferences;
+        /** @type {StoreEffect[]} */
+        const effects = [
+          { type: 'persist_note', note: restoredNote },
+          { type: 'remove_trash_item', id: item.id },
+        ];
+        if (preferences !== state.preferences) {
+          effects.push({ type: 'persist_preferences', preferences });
+        }
         return {
           nextState: {
             ...state,
@@ -1406,11 +1829,7 @@ export function reduce(state, command) {
             trash: remainingTrash,
             preferences,
           },
-          effects: [
-            { type: 'persist_note', note: restoredNote },
-            { type: 'remove_trash_item', id: item.id },
-            { type: 'persist_preferences', preferences },
-          ],
+          effects,
         };
       }
 
@@ -1426,7 +1845,17 @@ export function reduce(state, command) {
           projectId: activeProjectExists ? item.whiteboard.projectId : null,
           updatedAt: command.now,
         });
-        const preferences = { ...state.preferences, selectedWhiteboardId: restoredWbId };
+        const preferences = !isWhiteboardEffectivelyArchived(restoredWb, state.projects)
+          ? { ...state.preferences, selectedWhiteboardId: restoredWbId }
+          : state.preferences;
+        /** @type {StoreEffect[]} */
+        const effects = [
+          { type: 'persist_whiteboard', whiteboard: restoredWb },
+          { type: 'remove_trash_item', id: item.id },
+        ];
+        if (preferences !== state.preferences) {
+          effects.push({ type: 'persist_preferences', preferences });
+        }
         return {
           nextState: {
             ...state,
@@ -1434,11 +1863,7 @@ export function reduce(state, command) {
             trash: remainingTrash,
             preferences,
           },
-          effects: [
-            { type: 'persist_whiteboard', whiteboard: restoredWb },
-            { type: 'remove_trash_item', id: item.id },
-            { type: 'persist_preferences', preferences },
-          ],
+          effects,
         };
       }
 
@@ -1622,12 +2047,20 @@ export function reduce(state, command) {
         command.payload.taskStatuses !== undefined
           ? normalizeTaskStatuses(command.payload.taskStatuses)
           : state.preferences.taskStatuses;
+      const firstActiveProj = command.payload.projects.find((p) => !p.archived)?.id ?? null;
+      const firstActiveNote =
+        command.payload.notes.find((n) => !isNoteEffectivelyArchived(n, command.payload.projects))
+          ?.id ?? null;
+      const firstActiveWb =
+        command.payload.whiteboards.find(
+          (w) => !isWhiteboardEffectivelyArchived(w, command.payload.projects),
+        )?.id ?? null;
       const preferences = {
         ...state.preferences,
         taskStatuses,
-        selectedProjectId: command.payload.projects[0]?.id ?? null,
-        selectedNoteId: command.payload.notes[0]?.id ?? null,
-        selectedWhiteboardId: command.payload.whiteboards[0]?.id ?? null,
+        selectedProjectId: firstActiveProj,
+        selectedNoteId: firstActiveNote,
+        selectedWhiteboardId: firstActiveWb,
       };
       return {
         nextState: {
@@ -1655,11 +2088,20 @@ export function reduce(state, command) {
           ? normalizeTaskStatuses(command.payload.taskStatuses)
           : state.preferences.taskStatuses;
       const selectedProjectId =
-        state.preferences.selectedProjectId ?? command.payload.projects[0]?.id ?? null;
+        state.preferences.selectedProjectId ??
+        command.payload.projects.find((p) => !p.archived)?.id ??
+        null;
       const selectedNoteId =
-        state.preferences.selectedNoteId ?? command.payload.notes[0]?.id ?? null;
+        state.preferences.selectedNoteId ??
+        command.payload.notes.find((n) => !isNoteEffectivelyArchived(n, command.payload.projects))
+          ?.id ??
+        null;
       const selectedWhiteboardId =
-        state.preferences.selectedWhiteboardId ?? command.payload.whiteboards[0]?.id ?? null;
+        state.preferences.selectedWhiteboardId ??
+        command.payload.whiteboards.find(
+          (w) => !isWhiteboardEffectivelyArchived(w, command.payload.projects),
+        )?.id ??
+        null;
       const preferencesChanged =
         taskStatuses !== state.preferences.taskStatuses ||
         selectedProjectId !== state.preferences.selectedProjectId ||
@@ -1742,12 +2184,23 @@ export function createStore(initialState = createInitialState()) {
  * @param {Task} task
  * @param {TaskDueFilter | undefined} dueFilter
  * @param {string} todayIso
+ * @param {readonly TaskStatusConfig[]} [taskStatuses]
  * @returns {boolean}
  */
-export function matchesTaskDueFilter(task, dueFilter, todayIso) {
+export function matchesTaskDueFilter(
+  task,
+  dueFilter,
+  todayIso,
+  taskStatuses = DEFAULT_TASK_STATUSES,
+) {
   if (!dueFilter || dueFilter === 'all') return true;
   if (dueFilter === 'undated') return !task.dueDate;
-  const urgency = classifyDueDateUrgency(task.dueDate, todayIso, task.status);
+  const urgency = classifyDueDateUrgency(
+    task.dueDate,
+    todayIso,
+    task.status,
+    isTerminalTaskStatus(task.status, taskStatuses),
+  );
   if (dueFilter === 'overdue') return urgency === 'overdue';
   if (dueFilter === 'today') return urgency === 'today';
   if (dueFilter === 'week') return urgency === 'today' || urgency === 'this_week';
@@ -1755,14 +2208,21 @@ export function matchesTaskDueFilter(task, dueFilter, todayIso) {
 }
 
 /**
- * Select tasks matching optional filters.
- * Supports special status filters:
- * - `'all'` (default): all tasks (including tasks with no status or unknown status)
- * - `'__none__'`: only tasks with `status === null`
- * - `'__unknown__'`: only tasks whose `status` is non-null and not in `state.preferences.taskStatuses`
- * - `<statusId>`: only tasks with `task.status === statusId`
+ * Select active (non-archived) projects by default, or all projects if requested.
  * @param {AppState} state
- * @param {{ projectId?: string | null; status?: TaskStatusFilter; priority?: TaskPriority | 'all'; due?: TaskDueFilter; tag?: string | 'all'; todayIso?: string; query?: string; sortBy?: 'position' | 'dueDate' | 'priority' }} filters
+ * @param {{ includeArchived?: boolean }} [opts]
+ * @returns {Project[]}
+ */
+export function selectProjects(state, opts = {}) {
+  if (opts.includeArchived) return [...state.projects];
+  return state.projects.filter((p) => !p.archived);
+}
+
+/**
+ * Select tasks matching optional filters.
+ * Excludes archived tasks and tasks inside archived projects unless `includeArchived: true`.
+ * @param {AppState} state
+ * @param {{ projectId?: string | null; status?: TaskStatusFilter; priority?: TaskPriority | 'all'; due?: TaskDueFilter; tag?: string | 'all'; todayIso?: string; query?: string; sortBy?: 'position' | 'dueDate' | 'priority'; includeArchived?: boolean }} filters
  * @returns {Task[]}
  */
 export function selectTasks(state, filters = {}) {
@@ -1774,6 +2234,9 @@ export function selectTasks(state, filters = {}) {
     filters.tag && filters.tag !== 'all' ? filters.tag.trim().toLowerCase() : null;
 
   const filtered = state.tasks.filter((task) => {
+    if (!filters.includeArchived && isTaskEffectivelyArchived(task, state.projects)) {
+      return false;
+    }
     if (filters.projectId && task.projectId !== filters.projectId) return false;
     if (filters.status && filters.status !== 'all') {
       if (filters.status === '__none__') {
@@ -1787,7 +2250,7 @@ export function selectTasks(state, filters = {}) {
     if (filters.priority && filters.priority !== 'all' && task.priority !== filters.priority) {
       return false;
     }
-    if (!matchesTaskDueFilter(task, filters.due, todayIso)) {
+    if (!matchesTaskDueFilter(task, filters.due, todayIso, state.preferences.taskStatuses)) {
       return false;
     }
     if (tagFilterNorm && !(task.tags ?? []).some((tag) => tag.toLowerCase() === tagFilterNorm)) {
@@ -1801,7 +2264,11 @@ export function selectTasks(state, filters = {}) {
 
   return [...filtered].sort((a, b) => {
     if (filters.sortBy === 'dueDate') {
-      if (a.dueDate && b.dueDate) return a.dueDate.localeCompare(b.dueDate);
+      if (a.dueDate && b.dueDate) {
+        const cmpDate = a.dueDate.localeCompare(b.dueDate);
+        if (cmpDate !== 0) return cmpDate;
+        return (a.dueTime ?? '99:99').localeCompare(b.dueTime ?? '99:99');
+      }
       if (a.dueDate) return -1;
       if (b.dueDate) return 1;
     }
@@ -1866,8 +2333,9 @@ export function selectUnmappedKanbanTasks(state, projectId, filters = {}) {
 
 /**
  * Select notes matching project and search filters, sorted by most recently updated.
+ * Excludes archived notes unless `includeArchived: true`.
  * @param {AppState} state
- * @param {{ projectId?: string | null | 'all'; query?: string; tag?: string | 'all' }} filters
+ * @param {{ projectId?: string | null | 'all'; query?: string; tag?: string | 'all'; includeArchived?: boolean }} filters
  * @returns {Note[]}
  */
 export function selectNotes(state, filters = {}) {
@@ -1875,6 +2343,9 @@ export function selectNotes(state, filters = {}) {
   const tagFilterNorm =
     filters.tag && filters.tag !== 'all' ? filters.tag.trim().toLowerCase() : null;
   const filtered = state.notes.filter((note) => {
+    if (!filters.includeArchived && isNoteEffectivelyArchived(note, state.projects)) {
+      return false;
+    }
     if (filters.projectId !== undefined && filters.projectId !== 'all') {
       if (note.projectId !== filters.projectId) return false;
     }
@@ -1891,13 +2362,17 @@ export function selectNotes(state, filters = {}) {
 
 /**
  * Select whiteboards matching project and search filters, sorted by most recently updated.
+ * Excludes archived whiteboards unless `includeArchived: true`.
  * @param {AppState} state
- * @param {{ projectId?: string | null | 'all'; query?: string }} filters
+ * @param {{ projectId?: string | null | 'all'; query?: string; includeArchived?: boolean }} filters
  * @returns {Whiteboard[]}
  */
 export function selectWhiteboards(state, filters = {}) {
   const tokens = tokenizeSearchQuery(filters.query ?? '');
   const filtered = state.whiteboards.filter((wb) => {
+    if (!filters.includeArchived && isWhiteboardEffectivelyArchived(wb, state.projects)) {
+      return false;
+    }
     if (filters.projectId !== undefined && filters.projectId !== 'all') {
       if (wb.projectId !== filters.projectId) return false;
     }
@@ -1910,20 +2385,23 @@ export function selectWhiteboards(state, filters = {}) {
 }
 
 /**
- * Return all distinct tags used across tasks and notes, sorted alphabetically.
+ * Return all distinct tags used across active tasks and notes, sorted alphabetically.
  * @param {AppState} state
+ * @param {{ includeArchived?: boolean }} [opts]
  * @returns {string[]}
  */
-export function selectAllTags(state) {
+export function selectAllTags(state, opts = {}) {
   /** @type {Map<string, string>} */
   const unique = new Map();
   for (const task of state.tasks) {
+    if (!opts.includeArchived && isTaskEffectivelyArchived(task, state.projects)) continue;
     for (const tag of task.tags ?? []) {
       const key = tag.toLowerCase();
       if (!unique.has(key)) unique.set(key, tag);
     }
   }
   for (const note of state.notes) {
+    if (!opts.includeArchived && isNoteEffectivelyArchived(note, state.projects)) continue;
     for (const tag of note.tags ?? []) {
       const key = tag.toLowerCase();
       if (!unique.has(key)) unique.set(key, tag);
@@ -1939,8 +2417,8 @@ export function selectAllTags(state) {
  * @param {string} id
  * @param {readonly LocalRef[]} [overrideOutgoing]
  * @returns {{
- *   outgoing: Array<{ kind: LocalEntityKind; id: string; title: string; projectName: string | null }>;
- *   incoming: Array<{ kind: LocalEntityKind; id: string; title: string; projectName: string | null }>;
+ *   outgoing: Array<{ kind: LocalEntityKind; id: string; title: string; projectName: string | null; archived?: boolean; terminal?: boolean }>;
+ *   incoming: Array<{ kind: LocalEntityKind; id: string; title: string; projectName: string | null; archived?: boolean; terminal?: boolean }>;
  * }}
  */
 export function selectEntityLinkEntries(state, kind, id, overrideOutgoing) {
@@ -1954,30 +2432,38 @@ export function selectEntityLinkEntries(state, kind, id, overrideOutgoing) {
     if (ref.kind === 'task') {
       const t = tasksById.get(ref.id);
       if (!t) return null;
+      const archived = isTaskEffectivelyArchived(t, state.projects);
+      const terminal = isTerminalTaskStatus(t.status, state.preferences.taskStatuses);
       return {
         kind: /** @type {const} */ ('task'),
         id: t.id,
         title: t.title,
         projectName: projectsById.get(t.projectId) ?? null,
+        ...(archived ? { archived: true } : {}),
+        ...(terminal ? { terminal: true } : {}),
       };
     }
     if (ref.kind === 'note') {
       const n = notesById.get(ref.id);
       if (!n) return null;
+      const archived = isNoteEffectivelyArchived(n, state.projects);
       return {
         kind: /** @type {const} */ ('note'),
         id: n.id,
         title: n.title,
         projectName: n.projectId ? (projectsById.get(n.projectId) ?? null) : null,
+        ...(archived ? { archived: true } : {}),
       };
     }
     const w = wbsById.get(ref.id);
     if (!w) return null;
+    const archived = isWhiteboardEffectivelyArchived(w, state.projects);
     return {
       kind: /** @type {const} */ ('whiteboard'),
       id: w.id,
       title: w.title,
       projectName: w.projectId ? (projectsById.get(w.projectId) ?? null) : null,
+      ...(archived ? { archived: true } : {}),
     };
   }
 
@@ -1988,7 +2474,7 @@ export function selectEntityLinkEntries(state, kind, id, overrideOutgoing) {
     else rawOutgoing = wbsById.get(id)?.links ?? [];
   }
 
-  /** @type {Array<{ kind: LocalEntityKind; id: string; title: string; projectName: string | null }>} */
+  /** @type {Array<{ kind: LocalEntityKind; id: string; title: string; projectName: string | null; archived?: boolean; terminal?: boolean }>} */
   const outgoing = [];
   const outgoingKeys = new Set();
   for (const ref of rawOutgoing) {
@@ -2002,20 +2488,31 @@ export function selectEntityLinkEntries(state, kind, id, overrideOutgoing) {
     }
   }
 
-  /** @type {Array<{ kind: LocalEntityKind; id: string; title: string; projectName: string | null }>} */
+  /** @type {Array<{ kind: LocalEntityKind; id: string; title: string; projectName: string | null; archived?: boolean; terminal?: boolean }>} */
   const incoming = [];
   const scanIncoming = (
     /** @type {LocalEntityKind} */ srcKind,
-    /** @type {{ id: string; title: string; projectId: string | null; links?: readonly LocalRef[] }} */ item,
+    /** @type {Task | Note | Whiteboard} */ item,
   ) => {
     if (srcKind === kind && item.id === id) return;
     if (outgoingKeys.has(`${srcKind}:${item.id}`)) return;
     if ((item.links ?? []).some((ref) => ref.kind === kind && ref.id === id)) {
+      const archived =
+        srcKind === 'task'
+          ? isTaskEffectivelyArchived(/** @type {Task} */ (item), state.projects)
+          : srcKind === 'note'
+            ? isNoteEffectivelyArchived(/** @type {Note} */ (item), state.projects)
+            : isWhiteboardEffectivelyArchived(/** @type {Whiteboard} */ (item), state.projects);
+      const terminal =
+        srcKind === 'task' &&
+        isTerminalTaskStatus(/** @type {Task} */ (item).status, state.preferences.taskStatuses);
       incoming.push({
         kind: srcKind,
         id: item.id,
         title: item.title,
         projectName: item.projectId ? (projectsById.get(item.projectId) ?? null) : null,
+        ...(archived ? { archived: true } : {}),
+        ...(terminal ? { terminal: true } : {}),
       });
     }
   };
@@ -2027,10 +2524,152 @@ export function selectEntityLinkEntries(state, kind, id, overrideOutgoing) {
 }
 
 /**
- * Collect every assetId currently referenced by tasks, notes or whiteboards.
+ * Select all archived elements (projects, tasks, notes, whiteboards — directly archived or via an archived project)
+ * matching optional search/type/project/tag filters.
  * @param {AppState} state
- * @returns {Set<string>}
+ * @param {{
+ *   kind?: 'all' | 'project' | 'task' | 'note' | 'whiteboard';
+ *   projectId?: 'all' | '__none__' | string;
+ *   tag?: 'all' | string;
+ *   query?: string;
+ *   sortBy?: 'archivedAt' | 'updatedAt' | 'title';
+ * }} [filters]
+ * @returns {Array<{
+ *   kind: 'project' | 'task' | 'note' | 'whiteboard';
+ *   id: string;
+ *   title: string;
+ *   projectId: string | null;
+ *   projectName: string | null;
+ *   archiveReason: 'self' | 'project';
+ *   archivedAt: string;
+ *   updatedAt: string;
+ *   tags: readonly string[];
+ *   item: Project | Task | Note | Whiteboard;
+ * }>}
  */
+export function selectArchivedEntries(state, filters = {}) {
+  const projectsById = new Map(state.projects.map((p) => [p.id, p]));
+  const tokens = tokenizeSearchQuery(filters.query ?? '');
+  const tagFilterNorm =
+    filters.tag && filters.tag !== 'all' ? filters.tag.trim().toLowerCase() : null;
+
+  /** @type {Array<{ kind: 'project' | 'task' | 'note' | 'whiteboard'; id: string; title: string; projectId: string | null; projectName: string | null; archiveReason: 'self' | 'project'; archivedAt: string; updatedAt: string; tags: readonly string[]; searchText: string; item: Project | Task | Note | Whiteboard }>} */
+  const entries = [];
+
+  for (const project of state.projects) {
+    if (!project.archived) continue;
+    entries.push({
+      kind: 'project',
+      id: project.id,
+      title: project.name,
+      projectId: project.id,
+      projectName: project.name,
+      archiveReason: 'self',
+      archivedAt: project.archivedAt ?? project.updatedAt,
+      updatedAt: project.updatedAt,
+      tags: [],
+      searchText: `${project.name} ${project.description}`,
+      item: project,
+    });
+  }
+
+  for (const task of state.tasks) {
+    const parent = projectsById.get(task.projectId);
+    const parentArchived = Boolean(parent?.archived);
+    if (!task.archived && !parentArchived) continue;
+    entries.push({
+      kind: 'task',
+      id: task.id,
+      title: task.title,
+      projectId: task.projectId,
+      projectName: parent?.name ?? null,
+      archiveReason: task.archived ? 'self' : 'project',
+      archivedAt: task.archived
+        ? (task.archivedAt ?? task.updatedAt)
+        : (parent?.archivedAt ?? parent?.updatedAt ?? task.updatedAt),
+      updatedAt: task.updatedAt,
+      tags: task.tags ?? [],
+      searchText: extractTaskSearchText(task),
+      item: task,
+    });
+  }
+
+  for (const note of state.notes) {
+    const parent = note.projectId ? projectsById.get(note.projectId) : undefined;
+    const parentArchived = Boolean(parent?.archived);
+    if (!note.archived && !parentArchived) continue;
+    entries.push({
+      kind: 'note',
+      id: note.id,
+      title: note.title,
+      projectId: note.projectId,
+      projectName: parent?.name ?? null,
+      archiveReason: note.archived ? 'self' : 'project',
+      archivedAt: note.archived
+        ? (note.archivedAt ?? note.updatedAt)
+        : (parent?.archivedAt ?? parent?.updatedAt ?? note.updatedAt),
+      updatedAt: note.updatedAt,
+      tags: note.tags ?? [],
+      searchText: extractNoteSearchText(note),
+      item: note,
+    });
+  }
+
+  for (const wb of state.whiteboards) {
+    const parent = wb.projectId ? projectsById.get(wb.projectId) : undefined;
+    const parentArchived = Boolean(parent?.archived);
+    if (!wb.archived && !parentArchived) continue;
+    entries.push({
+      kind: 'whiteboard',
+      id: wb.id,
+      title: wb.title,
+      projectId: wb.projectId,
+      projectName: parent?.name ?? null,
+      archiveReason: wb.archived ? 'self' : 'project',
+      archivedAt: wb.archived
+        ? (wb.archivedAt ?? wb.updatedAt)
+        : (parent?.archivedAt ?? parent?.updatedAt ?? wb.updatedAt),
+      updatedAt: wb.updatedAt,
+      tags: [],
+      searchText: extractWhiteboardSearchText(wb),
+      item: wb,
+    });
+  }
+
+  const filtered = entries.filter((entry) => {
+    if (filters.kind && filters.kind !== 'all' && entry.kind !== filters.kind) {
+      return false;
+    }
+    if (filters.projectId && filters.projectId !== 'all') {
+      if (filters.projectId === '__none__') {
+        if (entry.projectId !== null) return false;
+      } else if (entry.projectId !== filters.projectId) {
+        return false;
+      }
+    }
+    if (tagFilterNorm && !entry.tags.some((t) => t.toLowerCase() === tagFilterNorm)) {
+      return false;
+    }
+    if (tokens.length > 0 && !matchesSearchTokens(entry.searchText, tokens)) {
+      return false;
+    }
+    return true;
+  });
+
+  const sortBy = filters.sortBy ?? 'archivedAt';
+  return filtered
+    .sort((a, b) => {
+      if (sortBy === 'title') {
+        return a.title.localeCompare(b.title, 'fr', { sensitivity: 'base' });
+      }
+      if (sortBy === 'updatedAt') {
+        return b.updatedAt.localeCompare(a.updatedAt);
+      }
+      return b.archivedAt.localeCompare(a.archivedAt) || b.updatedAt.localeCompare(a.updatedAt);
+    })
+    .map(({ searchText: _st, ...rest }) => rest);
+}
+
 /**
  * Select built-in + custom local templates, optionally filtered by kind.
  * @param {AppState} state
@@ -2052,7 +2691,7 @@ export function selectTrashItems(state) {
 }
 
 /**
- * Collect every assetId currently referenced by active entities or items in the trash.
+ * Collect every assetId currently referenced by active or archived entities or items in the trash.
  * @param {AppState} state
  * @returns {Set<string>}
  */
@@ -2124,6 +2763,7 @@ export function selectProjectById(state, projectId) {
 
 /**
  * Build the summary dataset for the "Aujourd’hui" dashboard view.
+ * Excludes archived items and tasks in terminal status from open action lists.
  * @param {AppState} state
  * @param {string} [todayIso]
  * @returns {{
@@ -2149,12 +2789,28 @@ export function selectTodaySummary(state, todayIso = getTodayIsoDate()) {
     }
     if (a.dueDate && !b.dueDate) return -1;
     if (!a.dueDate && b.dueDate) return 1;
+    if (a.dueDate && b.dueDate && a.dueDate === b.dueDate) {
+      const timeCmp = (a.dueTime ?? '99:99').localeCompare(b.dueTime ?? '99:99');
+      if (timeCmp !== 0) return timeCmp;
+    }
     const prioDiff = priorityWeight[a.priority] - priorityWeight[b.priority];
     if (prioDiff !== 0) return prioDiff;
     return b.updatedAt.localeCompare(a.updatedAt);
   };
 
-  const openTasks = state.tasks.filter((task) => task.status !== 'done');
+  const activeTasks = state.tasks.filter(
+    (task) => !isTaskEffectivelyArchived(task, state.projects),
+  );
+  const activeNotes = state.notes.filter(
+    (note) => !isNoteEffectivelyArchived(note, state.projects),
+  );
+  const activeWhiteboards = state.whiteboards.filter(
+    (wb) => !isWhiteboardEffectivelyArchived(wb, state.projects),
+  );
+
+  const openTasks = activeTasks.filter(
+    (task) => !isTerminalTaskStatus(task.status, state.preferences.taskStatuses),
+  );
   const overdueTasks = openTasks
     .filter((task) => Boolean(task.dueDate && task.dueDate < todayIso))
     .sort(compareDueAndPrio);
@@ -2172,21 +2828,21 @@ export function selectTodaySummary(state, todayIso = getTodayIsoDate()) {
 
   /** @type {Array<{ kind: 'task' | 'note' | 'whiteboard'; id: string; title: string; projectId: string | null; updatedAt: string }>} */
   const allRecent = [
-    ...state.tasks.map((t) => ({
+    ...activeTasks.map((t) => ({
       kind: /** @type {const} */ ('task'),
       id: t.id,
       title: t.title,
       projectId: t.projectId,
       updatedAt: t.updatedAt,
     })),
-    ...state.notes.map((n) => ({
+    ...activeNotes.map((n) => ({
       kind: /** @type {const} */ ('note'),
       id: n.id,
       title: n.title,
       projectId: n.projectId,
       updatedAt: n.updatedAt,
     })),
-    ...state.whiteboards.map((w) => ({
+    ...activeWhiteboards.map((w) => ({
       kind: /** @type {const} */ ('whiteboard'),
       id: w.id,
       title: w.title,

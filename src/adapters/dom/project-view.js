@@ -1,5 +1,6 @@
 /** @import { AppCommand, AppState, Project, StoreEffect } from '../../types.d.ts' */
 
+import { selectProjects } from '../../core/store.js';
 import {
   applyDialogPresentation,
   closeDialogById,
@@ -158,26 +159,14 @@ export function openProjectModal({ store, project }) {
 }
 
 /**
- * Filter projects according to active/archived selection.
- * @param {readonly Project[]} projects
- * @param {'all' | 'active' | 'archived'} archiveFilter
- * @returns {Project[]}
- */
-export function filterProjectsByArchive(projects, archiveFilter) {
-  if (archiveFilter === 'active') return projects.filter((p) => !p.archived);
-  if (archiveFilter === 'archived') return projects.filter((p) => p.archived);
-  return [...projects];
-}
-
-/**
- * Render the Projects view inside #app-view.
+ * Render the active Projects view inside #app-view.
+ * Archived projects are hidden here and managed on the Archives screen.
  * @param {{
  *   container: HTMLElement;
  *   store: {
  *     getState: () => AppState;
  *     dispatch: (cmd: AppCommand) => { state: AppState; effects: StoreEffect[] };
  *   };
- *   filters?: { archiveFilter: 'all' | 'active' | 'archived' };
  *   onOpenProjectNotes?: (projectId: string) => void;
  *   onOpenProjectWhiteboards?: (projectId: string) => void;
  * }} opts
@@ -185,7 +174,6 @@ export function filterProjectsByArchive(projects, archiveFilter) {
 export function renderProjectsView({
   container,
   store,
-  filters = { archiveFilter: 'all' },
   onOpenProjectNotes,
   onOpenProjectWhiteboards,
 }) {
@@ -203,46 +191,6 @@ export function renderProjectsView({
   heading.textContent = 'Vos projets';
   leftGroup.append(heading);
 
-  if (state.projects.length > 0) {
-    const filterSet = document.createElement('fieldset');
-    filterSet.className = 'cv-segmented';
-    filterSet.id = 'project-archive-filter';
-    const legend = document.createElement('legend');
-    legend.textContent = 'Filtrer par état du projet';
-    filterSet.append(legend);
-
-    /** @type {readonly { value: 'all' | 'active' | 'archived'; label: string }[]} */
-    const options = [
-      { value: 'all', label: 'Tous' },
-      { value: 'active', label: 'Actifs' },
-      { value: 'archived', label: 'Archivés' },
-    ];
-    for (const opt of options) {
-      const labelEl = document.createElement('label');
-      const radio = document.createElement('input');
-      radio.type = 'radio';
-      radio.name = 'project-archive-filter';
-      radio.value = opt.value;
-      radio.checked = filters.archiveFilter === opt.value;
-      radio.addEventListener('change', () => {
-        if (!radio.checked) return;
-        filters.archiveFilter = opt.value;
-        renderProjectsView({
-          container,
-          store,
-          filters,
-          onOpenProjectNotes,
-          onOpenProjectWhiteboards,
-        });
-      });
-      const textSpan = document.createElement('span');
-      textSpan.textContent = opt.label;
-      labelEl.append(radio, textSpan);
-      filterSet.append(labelEl);
-    }
-    leftGroup.append(filterSet);
-  }
-
   const newBtn = document.createElement('button');
   newBtn.type = 'button';
   newBtn.className = 'cv-btn cv-btn--primary';
@@ -255,6 +203,8 @@ export function renderProjectsView({
   newBtn.addEventListener('click', () => openProjectModal({ store }));
 
   header.append(leftGroup, newBtn);
+
+  const visibleProjects = selectProjects(state);
 
   if (state.projects.length === 0) {
     const empty = document.createElement('div');
@@ -285,31 +235,44 @@ export function renderProjectsView({
     return;
   }
 
-  const visibleProjects = filterProjectsByArchive(state.projects, filters.archiveFilter);
   if (visibleProjects.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'cv-empty';
+    const iconBox = document.createElement('span');
+    iconBox.className = 'cv-empty__icon';
+    const ic = document.createElement('i');
+    ic.className = 'ph ph-archive cv-icon';
+    ic.setAttribute('aria-hidden', 'true');
+    iconBox.append(ic);
+
     const title = document.createElement('p');
     title.className = 'cv-empty__title';
-    title.textContent =
-      filters.archiveFilter === 'archived' ? 'Aucun projet archivé' : 'Aucun projet actif';
+    title.textContent = 'Tous vos projets sont archivés';
 
-    const resetBtn = document.createElement('button');
-    resetBtn.type = 'button';
-    resetBtn.className = 'cv-btn';
-    resetBtn.textContent = 'Afficher tous les projets';
-    resetBtn.addEventListener('click', () => {
-      filters.archiveFilter = 'all';
-      renderProjectsView({
-        container,
-        store,
-        filters,
-        onOpenProjectNotes,
-        onOpenProjectWhiteboards,
-      });
+    const desc = document.createElement('p');
+    desc.textContent =
+      'Consultez l’écran Archives pour retrouver et désarchiver vos anciens projets, ou créez un nouveau projet actif.';
+
+    const emptyActions = document.createElement('div');
+    emptyActions.className = 'lc-view-header__group';
+
+    const archivesBtn = document.createElement('button');
+    archivesBtn.type = 'button';
+    archivesBtn.className = 'cv-btn';
+    archivesBtn.textContent = 'Ouvrir les archives';
+    archivesBtn.addEventListener('click', () => {
+      store.dispatch({ type: 'set_view', view: 'archives' });
     });
 
-    empty.append(title, resetBtn);
+    const cta = document.createElement('button');
+    cta.type = 'button';
+    cta.className = 'cv-btn cv-btn--primary';
+    cta.disabled = state.readOnly;
+    cta.textContent = 'Créer un projet';
+    cta.addEventListener('click', () => openProjectModal({ store }));
+
+    emptyActions.append(archivesBtn, cta);
+    empty.append(iconBox, title, desc, emptyActions);
     container.replaceChildren(header, empty);
     return;
   }
@@ -329,10 +292,10 @@ export function renderProjectsView({
     title.textContent = project.name;
 
     const badge = document.createElement('span');
-    badge.className = project.archived ? 'cv-badge' : 'cv-badge cv-badge--accent';
+    badge.className = 'cv-badge cv-badge--accent';
     const dot = document.createElement('span');
     dot.className = 'cv-badge__dot';
-    badge.append(dot, document.createTextNode(project.archived ? 'Archivé' : 'Actif'));
+    badge.append(dot, document.createTextNode('Actif'));
 
     cardHead.append(title, badge);
 
@@ -340,9 +303,12 @@ export function renderProjectsView({
     desc.className = 'lc-project-card__desc';
     desc.textContent = project.description || 'Aucune description.';
 
-    const taskCount = state.tasks.filter((t) => t.projectId === project.id).length;
-    const noteCount = state.notes.filter((n) => n.projectId === project.id).length;
-    const wbCount = state.whiteboards.filter((w) => w.projectId === project.id).length;
+    const taskCount = state.tasks.filter((t) => t.projectId === project.id && !t.archived).length;
+    const totalTaskCount = state.tasks.filter((t) => t.projectId === project.id).length;
+    const noteCount = state.notes.filter((n) => n.projectId === project.id && !n.archived).length;
+    const wbCount = state.whiteboards.filter(
+      (w) => w.projectId === project.id && !w.archived,
+    ).length;
     const meta = document.createElement('div');
     meta.className = 'cv-card__meta cv-num';
     meta.textContent = `${taskCount} tâche${taskCount > 1 ? 's' : ''} · ${noteCount} note${noteCount > 1 ? 's' : ''} · ${wbCount} tableau${wbCount > 1 ? 'x' : ''} blanc${wbCount > 1 ? 's' : ''}`;
@@ -408,17 +374,19 @@ export function renderProjectsView({
     archiveBtn.type = 'button';
     archiveBtn.className = 'cv-btn cv-btn--ghost cv-btn--sm';
     archiveBtn.disabled = state.readOnly;
-    archiveBtn.textContent = project.archived ? 'Désarchiver' : 'Archiver';
-    archiveBtn.setAttribute(
-      'aria-label',
-      `${project.archived ? 'Désarchiver' : 'Archiver'} ${project.name}`,
-    );
+    archiveBtn.textContent = 'Archiver';
+    archiveBtn.setAttribute('aria-label', `Archiver ${project.name}`);
     archiveBtn.addEventListener('click', () => {
       store.dispatch({
         type: 'toggle_archive_project',
         id: project.id,
-        archived: !project.archived,
+        archived: true,
         now: new Date().toISOString(),
+      });
+      notify({
+        status: 'info',
+        title: 'Projet archivé',
+        text: `${project.name} déplacé vers les archives.`,
       });
     });
 
@@ -431,7 +399,7 @@ export function renderProjectsView({
     deleteBtn.addEventListener('click', async () => {
       const confirmed = await confirmAction({
         title: `Supprimer « ${project.name} » ?`,
-        message: `Ce projet et ses ${taskCount} tâche(s) seront déplacés dans la corbeille locale. Les notes et tableaux blancs associés resteront accessibles sans projet.`,
+        message: `Ce projet et ses ${totalTaskCount} tâche(s) seront déplacés dans la corbeille locale. Les notes et tableaux blancs associés resteront accessibles sans projet.`,
         confirmLabel: 'Supprimer le projet',
         danger: true,
       });

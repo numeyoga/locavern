@@ -1,7 +1,7 @@
 /** @import { AppCommand, AppState, StoreEffect, Whiteboard } from '../../types.d.ts' */
 
 import { DEFAULT_WHITEBOARD_VIEWPORT } from '../../core/model.js';
-import { selectTemplates } from '../../core/store.js';
+import { selectProjects, selectTemplates } from '../../core/store.js';
 import { instantiateWhiteboardTemplate } from '../../core/templates.js';
 import {
   applyDialogPresentation,
@@ -83,6 +83,12 @@ export function openWhiteboardDialog({
   titleError.append(titleErrIcon, titleErrText);
   titleField.append(titleLabel, titleInput, titleError);
 
+  const activeProjects = selectProjects(state);
+  const projectChoices =
+    whiteboard?.projectId && !activeProjects.some((p) => p.id === whiteboard.projectId)
+      ? [...activeProjects, ...state.projects.filter((p) => p.id === whiteboard.projectId)]
+      : activeProjects;
+
   const projectField = document.createElement('div');
   projectField.className = 'cv-field';
   const projectLabel = document.createElement('label');
@@ -99,16 +105,19 @@ export function openWhiteboardDialog({
   noProjOpt.value = '';
   noProjOpt.textContent = 'Sans projet';
   projectSelect.append(noProjOpt);
-  for (const p of state.projects) {
+  for (const p of projectChoices) {
     const opt = document.createElement('option');
     opt.value = p.id;
     opt.textContent = p.archived ? `${p.name} (archivé)` : p.name;
     projectSelect.append(opt);
   }
+  const preferredProj =
+    state.preferences.selectedProjectId &&
+    projectChoices.some((p) => p.id === state.preferences.selectedProjectId)
+      ? state.preferences.selectedProjectId
+      : '';
   projectSelect.value =
-    whiteboard !== undefined
-      ? (whiteboard.projectId ?? '')
-      : (defaultProjectId ?? state.preferences.selectedProjectId ?? '');
+    whiteboard !== undefined ? (whiteboard.projectId ?? '') : (defaultProjectId ?? preferredProj);
   projectSelectWrap.append(projectSelect);
   projectField.append(projectLabel, projectSelectWrap);
 
@@ -164,7 +173,6 @@ export function openWhiteboardDialog({
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
     deleteBtn.className = 'cv-btn cv-btn--danger';
-    deleteBtn.style.marginRight = 'auto';
     deleteBtn.textContent = 'Supprimer';
     deleteBtn.addEventListener('click', async () => {
       closeDialogById('dialog-whiteboard');
@@ -188,7 +196,30 @@ export function openWhiteboardDialog({
         });
       }
     });
-    footerButtons.push(deleteBtn);
+
+    const archiveBtn = document.createElement('button');
+    archiveBtn.type = 'button';
+    archiveBtn.id = 'btn-dialog-archive-whiteboard';
+    archiveBtn.className = 'cv-btn';
+    archiveBtn.style.marginRight = 'auto';
+    archiveBtn.textContent = whiteboard.archived ? 'Désarchiver' : 'Archiver';
+    archiveBtn.addEventListener('click', () => {
+      const nextArchived = !whiteboard.archived;
+      store.dispatch({
+        type: 'toggle_archive_whiteboard',
+        id: whiteboard.id,
+        archived: nextArchived,
+        now: new Date().toISOString(),
+      });
+      closeDialogById('dialog-whiteboard');
+      notify({
+        status: 'info',
+        title: nextArchived ? 'Tableau blanc archivé' : 'Tableau blanc désarchivé',
+        text: nextArchived ? `${whiteboard.title} déplacé vers les archives.` : whiteboard.title,
+      });
+    });
+
+    footerButtons.push(deleteBtn, archiveBtn);
   }
   footerButtons.push(cancelBtn, saveBtn);
   footerEl.replaceChildren(...footerButtons);

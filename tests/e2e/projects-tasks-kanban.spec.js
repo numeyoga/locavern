@@ -35,9 +35,13 @@ test.describe('Projets, Tâches (Liste & Kanban) et accessibilité (Étape 4)', 
     await expect(page.getByRole('heading', { name: 'Refonte web' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Archiver Refonte web' }).click();
-    await expect(page.getByText('Archivé', { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Désarchiver Refonte web' }).click();
-    await expect(page.getByText('Actif', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Refonte web' })).toHaveCount(0);
+    await page.locator('[data-nav-view="archives"]').click();
+    await expect(page.locator('#topbar-title')).toHaveText('Archives');
+    await expect(page.locator('.lc-archives-list')).toContainText('Refonte web');
+    await page.locator('#btn-archive-restore').click();
+    await page.locator('[data-nav-view="projects"]').click();
+    await expect(page.getByRole('heading', { name: 'Refonte web' })).toBeVisible();
 
     // Accessibilité WCAG 2.2 AA et reflow 320 px sur la vue Projets (boutons Tâches + Notes + Tableaux blancs + filtre Actifs/Archivés)
     const projectsLightAxe = await new AxeBuilder({ page })
@@ -301,7 +305,7 @@ test.describe('Projets, Tâches (Liste & Kanban) et accessibilité (Étape 4)', 
     await expect(page.locator('[data-kanban-status="en_revue"]')).toContainText('Tâche en cours');
   });
 
-  test('filtre Actifs/Archivés et raccourci Ouvrir les tableaux blancs sur les cartes projet', async ({
+  test('archivage déplacé vers Archives et raccourci Ouvrir les tableaux blancs sur les cartes projet', async ({
     page,
   }) => {
     await page.goto('/');
@@ -316,16 +320,15 @@ test.describe('Projets, Tâches (Liste & Kanban) et accessibilité (Étape 4)', 
     await page.locator('#modal-project button[type="submit"]').click();
     await page.getByRole('button', { name: 'Archiver Projet Archive' }).click();
 
-    // Filtrer Actifs -> Archivés -> Tous
-    await page.locator('input[name="project-archive-filter"][value="active"]').check();
+    // Projet Archive n'est plus visible dans Projets
     await expect(page.getByRole('heading', { name: 'Projet Actif' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Projet Archive' })).toHaveCount(0);
 
-    await page.locator('input[name="project-archive-filter"][value="archived"]').check();
-    await expect(page.getByRole('heading', { name: 'Projet Archive' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Projet Actif' })).toHaveCount(0);
-
-    await page.locator('input[name="project-archive-filter"][value="all"]').check();
+    // Projet Archive est visible et filtrable dans Archives, puis désarchivable
+    await page.locator('[data-nav-view="archives"]').click();
+    await expect(page.locator('.lc-archives-list')).toContainText('Projet Archive');
+    await page.locator('#btn-archive-restore').click();
+    await page.locator('[data-nav-view="projects"]').click();
     await expect(page.getByRole('heading', { name: 'Projet Actif' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Projet Archive' })).toBeVisible();
 

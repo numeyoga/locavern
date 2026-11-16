@@ -11,7 +11,7 @@ import './styles/app.css';
 /** @import { LocalRef, ActiveView, AssetMeta, Note, Task, TaskDueFilter, TaskPriority, TaskStatus, TaskStatusFilter, Whiteboard } from './types.d.ts' */
 
 import { getTodayIsoDate } from './core/dates.js';
-import { getTaskStatusMeta } from './core/model.js';
+import { getDefaultInitialTaskStatusId, getTaskStatusMeta } from './core/model.js';
 import {
   extractNoteSearchText,
   extractTaskSearchText,
@@ -19,8 +19,13 @@ import {
 } from './core/search.js';
 import {
   createStore,
+  isNoteEffectivelyArchived,
+  isTaskEffectivelyArchived,
+  isWhiteboardEffectivelyArchived,
+  selectArchivedEntries,
   selectOrphanedAssetIds,
   selectProjectById,
+  selectProjects,
   selectReferencedAssetIds,
 } from './core/store.js';
 import { validateImageFile } from './adapters/archive-file.js';
@@ -49,6 +54,7 @@ import {
   toggleColorScheme,
   wireAppShell,
 } from './adapters/dom/app-shell.js';
+import { renderArchivesView } from './adapters/dom/archives-view.js';
 import { wireBackupModal } from './adapters/dom/backup-modal.js';
 import { renderCalendarView } from './adapters/dom/calendar-view.js';
 import { renderKanbanView } from './adapters/dom/kanban-view.js';
@@ -188,10 +194,6 @@ async function bootstrap() {
     return { assetId, alt: meta.filename };
   }
 
-  /** @type {{ archiveFilter: 'all' | 'active' | 'archived' }} */
-  const projectsFilters = {
-    archiveFilter: 'all',
-  };
   /** @type {{ query: string; status: TaskStatusFilter; priority: TaskPriority | 'all'; tag: string | 'all'; sortBy: 'position' | 'dueDate' | 'priority' }} */
   const taskListFilters = {
     query: '',
@@ -218,6 +220,15 @@ async function bootstrap() {
     projectId: 'all',
     query: '',
   };
+  /** @type {{ query: string; kind: 'all' | 'project' | 'task' | 'note' | 'whiteboard'; projectId: 'all' | '__none__' | string; tag: 'all' | string; sortBy: 'archivedAt' | 'updatedAt' | 'title'; selectedKey: string | null }} */
+  const archivesFilters = {
+    query: '',
+    kind: 'all',
+    projectId: 'all',
+    tag: 'all',
+    sortBy: 'archivedAt',
+    selectedKey: null,
+  };
   /** @type {{ mode: 'month' | 'week'; anchorDate: string; focusTaskId: string | null }} */
   const calendarState = {
     mode: 'month',
@@ -241,8 +252,17 @@ async function bootstrap() {
     }
   }
 
+  /** @param {ReturnType<typeof store.getState>} state */
+  function syncArchiveSidebarBadge(state) {
+    const badge = document.getElementById('nav-archives-count');
+    if (!badge) return;
+    const count = selectArchivedEntries(state, {}).length;
+    badge.textContent = String(count);
+    badge.hidden = count === 0;
+  }
+
   /**
-   * Jump directly to a linked local Task, Note, or Whiteboard across projects and views.
+   * Jump directly to a linked local Task, Note, or Whiteboard (or open Archives if archived).
    * @param {LocalRef} ref
    */
   function handleNavigateLocalRef(ref) {
@@ -251,6 +271,15 @@ async function bootstrap() {
     if (ref.kind === 'task') {
       const target = s.tasks.find((t) => t.id === ref.id);
       if (!target) return;
+      if (isTaskEffectivelyArchived(target, s.projects)) {
+        archivesFilters.query = '';
+        archivesFilters.kind = 'all';
+        archivesFilters.projectId = 'all';
+        archivesFilters.tag = 'all';
+        archivesFilters.selectedKey = `task:${target.id}`;
+        store.dispatch({ type: 'set_view', view: 'archives' });
+        return;
+      }
       if (s.preferences.selectedProjectId && s.preferences.selectedProjectId !== target.projectId) {
         store.dispatch({ type: 'select_project', projectId: target.projectId });
       }
@@ -261,6 +290,15 @@ async function bootstrap() {
     if (ref.kind === 'note') {
       const target = s.notes.find((n) => n.id === ref.id);
       if (!target) return;
+      if (isNoteEffectivelyArchived(target, s.projects)) {
+        archivesFilters.query = '';
+        archivesFilters.kind = 'all';
+        archivesFilters.projectId = 'all';
+        archivesFilters.tag = 'all';
+        archivesFilters.selectedKey = `note:${target.id}`;
+        store.dispatch({ type: 'set_view', view: 'archives' });
+        return;
+      }
       notesFilters.projectId = 'all';
       notesFilters.query = '';
       notesFilters.tag = 'all';
@@ -271,6 +309,15 @@ async function bootstrap() {
     if (ref.kind === 'whiteboard') {
       const target = s.whiteboards.find((w) => w.id === ref.id);
       if (!target) return;
+      if (isWhiteboardEffectivelyArchived(target, s.projects)) {
+        archivesFilters.query = '';
+        archivesFilters.kind = 'all';
+        archivesFilters.projectId = 'all';
+        archivesFilters.tag = 'all';
+        archivesFilters.selectedKey = `whiteboard:${target.id}`;
+        store.dispatch({ type: 'set_view', view: 'archives' });
+        return;
+      }
       whiteboardsFilters.projectId = 'all';
       whiteboardsFilters.query = '';
       store.dispatch({ type: 'select_whiteboard', whiteboardId: target.id });
@@ -282,13 +329,15 @@ async function bootstrap() {
    * @param {Task} [task]
    * @param {TaskStatus | null} [defaultStatus]
    * @param {string | null} [defaultDueDate]
+   * @param {string | null} [defaultDueTime]
    */
-  function handleOpenTaskDrawer(task, defaultStatus, defaultDueDate) {
+  function handleOpenTaskDrawer(task, defaultStatus, defaultDueDate, defaultDueTime) {
     openTaskDrawer({
       store,
       task,
       defaultStatus,
       defaultDueDate,
+      defaultDueTime,
       resolveAssetUrl,
       uploadLocalImage,
       onNavigateLocalRef: handleNavigateLocalRef,
@@ -332,10 +381,18 @@ async function bootstrap() {
     });
   }
 
+  /** @param {ReturnType<typeof store.getState>} state */
+  function getActiveSelectedProjectId(state) {
+    const id = state.preferences.selectedProjectId;
+    if (!id) return null;
+    return selectProjects(state).some((p) => p.id === id) ? id : null;
+  }
+
   function renderCurrentViewContent() {
     const state = store.getState();
     const activeView = state.preferences.activeView;
     syncNavigationChrome(activeView);
+    syncArchiveSidebarBadge(state);
     renderReadOnlyBanner(state.readOnly, () => {
       void retryAcquireLock();
     });
@@ -369,26 +426,29 @@ async function bootstrap() {
           store.dispatch({ type: 'set_view', view: 'whiteboards' });
         },
         onNewTask() {
-          if (store.getState().readOnly) return;
-          if (store.getState().projects.length === 0) {
+          const s = store.getState();
+          if (s.readOnly) return;
+          if (selectProjects(s).length === 0) {
             openProjectModal({ store });
           } else {
             handleOpenTaskDrawer(
               undefined,
-              store.getState().preferences.taskStatuses[0]?.id ?? null,
+              getDefaultInitialTaskStatusId(s.preferences.taskStatuses),
             );
           }
         },
         onNewNote() {
-          if (store.getState().readOnly) return;
+          const s = store.getState();
+          if (s.readOnly) return;
           handleOpenNoteDialog({
-            defaultProjectId: store.getState().preferences.selectedProjectId ?? null,
+            defaultProjectId: getActiveSelectedProjectId(s),
           });
         },
         onNewWhiteboard() {
-          if (store.getState().readOnly) return;
+          const s = store.getState();
+          if (s.readOnly) return;
           handleOpenWhiteboardDialog({
-            defaultProjectId: store.getState().preferences.selectedProjectId ?? null,
+            defaultProjectId: getActiveSelectedProjectId(s),
           });
         },
       });
@@ -399,7 +459,6 @@ async function bootstrap() {
       renderProjectsView({
         container: rootView,
         store,
-        filters: projectsFilters,
         onOpenProjectNotes(projectId) {
           notesFilters.projectId = projectId;
           notesFilters.query = '';
@@ -422,11 +481,12 @@ async function bootstrap() {
         store,
         calendarState,
         onOpenTask: (task) => handleOpenTaskDrawer(task),
-        onNewTask: (defaultDueDate) => {
+        onNewTask: (defaultDueDate, defaultDueTime) => {
           handleOpenTaskDrawer(
             undefined,
-            store.getState().preferences.taskStatuses[0]?.id ?? null,
+            getDefaultInitialTaskStatusId(store.getState().preferences.taskStatuses),
             defaultDueDate ?? null,
+            defaultDueTime ?? null,
           );
         },
         onOpenNewProject: () => openProjectModal({ store }),
@@ -457,6 +517,16 @@ async function bootstrap() {
         resolveAssetUrl,
         uploadLocalImage,
         onOpenWhiteboardDialog: handleOpenWhiteboardDialog,
+        onNavigateLocalRef: handleNavigateLocalRef,
+      });
+      return;
+    }
+
+    if (activeView === 'archives') {
+      renderArchivesView({
+        container: rootView,
+        store,
+        filters: archivesFilters,
         onNavigateLocalRef: handleNavigateLocalRef,
       });
       return;
@@ -547,6 +617,7 @@ async function bootstrap() {
 
   store.subscribe(({ state, prevState, command, effects }) => {
     setToastDurationSeconds(state.preferences.toastDurationSeconds);
+    syncArchiveSidebarBadge(state);
 
     if (effects.length > 0) {
       pendingWrites += 1;
@@ -586,6 +657,12 @@ async function bootstrap() {
       kanbanFilters.tag = 'all';
       whiteboardsFilters.projectId = 'all';
       whiteboardsFilters.query = '';
+      archivesFilters.query = '';
+      archivesFilters.kind = 'all';
+      archivesFilters.projectId = 'all';
+      archivesFilters.tag = 'all';
+      archivesFilters.sortBy = 'archivedAt';
+      archivesFilters.selectedKey = null;
     }
 
     if (command.type === 'delete_asset') {
@@ -639,17 +716,18 @@ async function bootstrap() {
       const statuses = state.preferences.taskStatuses;
       const items = [];
 
-      for (const project of state.projects) {
+      for (const project of selectProjects(state)) {
         items.push({
           value: `open:project:${project.id}`,
           label: project.name,
-          meta: project.archived ? 'Projet (archivé)' : 'Projet',
+          meta: 'Projet',
           icon: 'ph-folder-open',
           searchText: `${project.name} ${project.description}`,
         });
       }
 
       for (const task of state.tasks) {
+        if (isTaskEffectivelyArchived(task, state.projects)) continue;
         const projName = selectProjectById(state, task.projectId)?.name ?? 'Projet';
         const statusLabel = getTaskStatusMeta(task.status, statuses).label;
         items.push({
@@ -662,6 +740,7 @@ async function bootstrap() {
       }
 
       for (const note of state.notes) {
+        if (isNoteEffectivelyArchived(note, state.projects)) continue;
         const projName = note.projectId ? selectProjectById(state, note.projectId)?.name : null;
         items.push({
           value: `open:note:${note.id}`,
@@ -673,6 +752,7 @@ async function bootstrap() {
       }
 
       for (const wb of state.whiteboards) {
+        if (isWhiteboardEffectivelyArchived(wb, state.projects)) continue;
         const projName = wb.projectId ? selectProjectById(state, wb.projectId)?.name : null;
         items.push({
           value: `open:whiteboard:${wb.id}`,
@@ -768,12 +848,19 @@ async function bootstrap() {
           flushActiveViewHandles();
           store.dispatch({ type: 'set_view', view: 'whiteboards' });
           break;
+        case 'view:archives':
+          flushActiveViewHandles();
+          store.dispatch({ type: 'set_view', view: 'archives' });
+          break;
         case 'action:new-task':
           if (state.readOnly) return;
-          if (state.projects.length === 0) {
+          if (selectProjects(state).length === 0) {
             openProjectModal({ store });
           } else {
-            handleOpenTaskDrawer(undefined, state.preferences.taskStatuses[0]?.id ?? null);
+            handleOpenTaskDrawer(
+              undefined,
+              getDefaultInitialTaskStatusId(state.preferences.taskStatuses),
+            );
           }
           break;
         case 'action:new-project':
@@ -782,12 +869,12 @@ async function bootstrap() {
           break;
         case 'action:new-note':
           if (state.readOnly) return;
-          handleOpenNoteDialog({ defaultProjectId: state.preferences.selectedProjectId ?? null });
+          handleOpenNoteDialog({ defaultProjectId: getActiveSelectedProjectId(state) });
           break;
         case 'action:new-whiteboard':
           if (state.readOnly) return;
           handleOpenWhiteboardDialog({
-            defaultProjectId: state.preferences.selectedProjectId ?? null,
+            defaultProjectId: getActiveSelectedProjectId(state),
           });
           break;
         case 'action:open-statuses':

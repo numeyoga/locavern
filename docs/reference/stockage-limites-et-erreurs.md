@@ -1,7 +1,7 @@
 ---
 version: '0.2.0'
 cree_le: 2026-11-13
-mis_a_jour_le: 2026-11-15
+mis_a_jour_le: 2026-11-16
 ---
 
 # Stockage local, format d’archive et messages d’erreur
@@ -21,11 +21,11 @@ Spécification factuelle du stockage navigateur, des formats d’export et d’a
 Locavern stocke l’ensemble des données localement sur l’appareil, dans la même origine navigateur :
 
 - **Base `IndexedDB` (`locavern-db`, version `4`)**, composée de `8` magasins d’objets :
-  - `meta` : clé `preferences` (préférences d’affichage, vue active, mode Liste/Kanban, sélections courantes, durée des notifications, rétention de la corbeille, colonnes Kanban) et clé `lastBackupAt` (horodatage ISO de la dernière sauvegarde ZIP enregistrée) ;
-  - `projects` : projets ;
-  - `tasks` : tâches, échéances, récurrence, étiquettes, liens internes, listes de contrôle et descriptions ;
-  - `notes` : notes enrichies, étiquettes et liens internes ;
-  - `whiteboards` : tableaux blancs (titre, projet associé, `viewport`, `elements`, liens internes, `assetIds`) ;
+  - `meta` : clé `preferences` (préférences d’affichage, vue active, mode Liste/Kanban, sélections courantes, durée des notifications, rétention de la corbeille, colonnes Kanban avec rôles `isInitial`/`isTerminal`) et clé `lastBackupAt` (horodatage ISO de la dernière sauvegarde ZIP enregistrée) ;
+  - `projects` : projets (dont `archived` / `archivedAt`) ;
+  - `tasks` : tâches, échéances (`dueDate`, `dueTime` optionnel au format `HH:MM`), récurrence, étiquettes, liens internes, listes de contrôle, descriptions et archivage (`archived` / `archivedAt`) ;
+  - `notes` : notes enrichies, étiquettes, liens internes et archivage (`archived` / `archivedAt`) ;
+  - `whiteboards` : tableaux blancs (titre, projet associé, `viewport`, `elements`, liens internes, `assetIds` et `archived` / `archivedAt`) ;
   - `assets` : métadonnées et données binaires (`Blob`) des images locales ;
   - `trash` : corbeille locale (`TrashItem` avec instantané de l’élément supprimé, date de suppression et date d’expiration) ;
   - `templates` : modèles personnalisés locaux (`LocalTemplate` de checklist, note ou tableau blanc).
@@ -69,36 +69,36 @@ Lorsqu’un mot de passe est fourni, l’archive ZIP interne (`level: 6`) est ch
 - **Export iCalendar des échéances (`src/core/ical.js`)** :
   - Nom de fichier : `locavern-<slug-projet|echeances>-AAAA-MM-JJ.ics` ;
   - Standard : RFC 5545 (`VCALENDAR` `VERSION:2.0`, `PRODID:-//Locavern//Calendar Export//FR`, `METHOD:PUBLISH`), repli de ligne à `75` octets UTF-8 ;
-  - Périmètre : uniquement les tâches du filtre courant possédant une `dueDate` valide, émises en événements journée entière (`DTSTART;VALUE=DATE`, `DTEND;VALUE=DATE` au lendemain), `UID:locavern-task-<id>@locavern.local`, `STATUS` (`COMPLETED` / `CONFIRMED` / `TENTATIVE`), `PRIORITY` (`1` haute / `5` moyenne / `9` basse) et `CATEGORIES` (nom du projet).
+  - Périmètre : uniquement les tâches non archivées du filtre courant possédant une `dueDate` valide, émises en événements journée entière (`DTSTART;VALUE=DATE`, `DTEND;VALUE=DATE` au lendemain) sans `dueTime` ou en événements horodatés d’une heure (`DTSTART`, `DTEND` locaux, passage minuit géré) avec `dueTime`, `UID:locavern-task-<id>@locavern.local`, `STATUS` (`COMPLETED` sur statut terminal / `CONFIRMED` / `TENTATIVE` sur statut initial), `PRIORITY` (`1` haute / `5` moyenne / `9` basse) et `CATEGORIES` (nom du projet).
 
 ## Portée des archives et limites techniques
 
 - **Portée du schéma d’archive `schemaVersion: 2`** :
-  - Sont inclus et restaurés par l’import ZIP (`replace`, `merge`, `projects`) : `projects`, `tasks` (y compris `recurrence`, `checklist`, `descriptionDoc`), `notes`, `whiteboards`, `assets` et `taskStatuses`. En mode `merge` et `projects`, les identifiants en collision sont réalloués de façon cohérente avec les références entre entités et les `assetIds` ;
+  - Sont inclus et restaurés par l’import ZIP (`replace`, `merge`, `projects`) : `projects` (`archived`, `archivedAt`), `tasks` (y compris `dueTime`, `archived`, `archivedAt`, `recurrence`, `checklist`, `descriptionDoc`), `notes` (`archived`, `archivedAt`), `whiteboards` (`archived`, `archivedAt`), `assets` et `taskStatuses` (y compris les drapeaux `isInitial` / `isTerminal`). En mode `merge` et `projects`, les identifiants en collision sont réalloués de façon cohérente avec les références entre entités et les `assetIds` ;
   - Ne sont pas transportés par le schéma d’archive `v2` (`src/core/schema.js`) et restent strictement locaux à `IndexedDB` / `localStorage` : les étiquettes (`tags`), les liens internes (`links`), le contenu de la corbeille (`trash`), les modèles personnalisés (`templates`), ainsi que les réglages visuels `localStorage`.
 
-| Élément                                             | Valeur ou contrainte vérifiée                                                                                           |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Version de schéma d’archive                         | `2` (`schemaVersion: 2`, migration transparente depuis `schemaVersion: 1` à l’import)                                   |
-| Version de schéma `IndexedDB`                       | `4` (`DB_VERSION = 4`, `8` objectStores)                                                                                |
-| Formats d’image acceptés                            | `image/png`, `image/jpeg`, `image/webp`, `image/gif` (SVG et images distantes exclus)                                   |
-| Taille maximale par image                           | `5 Mio` (`5 242 880` octets)                                                                                            |
-| Taille maximale d’une archive ZIP (et déchiffrée)   | `25 Mio` (`26 214 400` octets)                                                                                          |
-| Nombre maximal d’enregistrements à l’import         | `10 000` (somme des projets, tâches, notes, tableaux blancs et images)                                                  |
-| Protocoles de lien autorisés dans l’éditeur         | `https://` et `mailto:` uniquement (`target="_blank"`, `rel="noopener noreferrer"`)                                     |
-| Longueur maximale — nom de projet / modèle          | `120` caractères                                                                                                        |
-| Longueur maximale — description de projet           | `1 000` caractères                                                                                                      |
-| Longueur maximale — titre de tâche, note ou tableau | `200` caractères                                                                                                        |
-| Longueur maximale — étape de liste de contrôle      | `200` caractères (`100` étapes max. pour un modèle de checklist)                                                        |
-| Étiquettes (`tags`)                                 | `20` étiquettes max. par tâche ou note, `40` caractères max. par étiquette, dédoublonnées sans casse (`#` retiré)       |
-| Liens internes (`links`)                            | `50` liens max. par entité (`task`, `note`, `whiteboard`), auto-références ignorées                                     |
-| Modèles personnalisés (`templates`)                 | Les images locales (`localImage` / `image`) sont exclues lors de l’enregistrement                                       |
-| Rétention de la corbeille locale                    | Entier dans `[1 ; 365]` jours (`30` par défaut) ; la purge nettoie les liens devenus invalides et les images orphelines |
-| Durée des notifications (succès / information)      | Entier dans `[1 ; 60]` secondes (`6` par défaut)                                                                        |
-| Colonnes Kanban personnalisées                      | `12` statuts maximum, `40` caractères maximum par libellé                                                               |
-| Limites d’un élément de tableau blanc               | Dimensions `[16, 4000]` (`[0, 4000]` pour `arrow`/`path`), texte `500` car., `2 000` points/tracé                       |
-| Limites du viewport et grille de tableau blanc      | `zoom` dans `[0,25 ; 3]`, `panX` et `panY` dans `[-10 000 ; 10 000]`, pas de grille `20 px`, historique `50` états      |
-| Résultats visibles de la palette `Ctrl+K`           | `60` éléments maximum (`MAX_VISIBLE_RESULTS = 60`)                                                                      |
+| Élément                                             | Valeur ou contrainte vérifiée                                                                                                          |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Version de schéma d’archive                         | `2` (`schemaVersion: 2`, migration transparente depuis `schemaVersion: 1` à l’import)                                                  |
+| Version de schéma `IndexedDB`                       | `4` (`DB_VERSION = 4`, `8` objectStores)                                                                                               |
+| Formats d’image acceptés                            | `image/png`, `image/jpeg`, `image/webp`, `image/gif` (SVG et images distantes exclus)                                                  |
+| Taille maximale par image                           | `5 Mio` (`5 242 880` octets)                                                                                                           |
+| Taille maximale d’une archive ZIP (et déchiffrée)   | `25 Mio` (`26 214 400` octets)                                                                                                         |
+| Nombre maximal d’enregistrements à l’import         | `10 000` (somme des projets, tâches, notes, tableaux blancs et images)                                                                 |
+| Protocoles de lien autorisés dans l’éditeur         | `https://` et `mailto:` uniquement (`target="_blank"`, `rel="noopener noreferrer"`)                                                    |
+| Longueur maximale — nom de projet / modèle          | `120` caractères                                                                                                                       |
+| Longueur maximale — description de projet           | `1 000` caractères                                                                                                                     |
+| Longueur maximale — titre de tâche, note ou tableau | `200` caractères                                                                                                                       |
+| Longueur maximale — étape de liste de contrôle      | `200` caractères (`100` étapes max. pour un modèle de checklist)                                                                       |
+| Étiquettes (`tags`)                                 | `20` étiquettes max. par tâche ou note, `40` caractères max. par étiquette, dédoublonnées sans casse (`#` retiré)                      |
+| Liens internes (`links`)                            | `50` liens max. par entité active (`task`, `note`, `whiteboard`), auto-références ignorées, nouveaux liens bloqués sur statut terminal |
+| Modèles personnalisés (`templates`)                 | Les images locales (`localImage` / `image`) sont exclues lors de l’enregistrement                                                      |
+| Rétention de la corbeille locale                    | Entier dans `[1 ; 365]` jours (`30` par défaut) ; la purge nettoie les liens devenus invalides et les images orphelines                |
+| Durée des notifications (succès / information)      | Entier dans `[1 ; 60]` secondes (`6` par défaut)                                                                                       |
+| Colonnes Kanban personnalisées                      | `12` statuts maximum, `60` caractères maximum par libellé (`isInitial` et `isTerminal` mutuellement exclusifs)                         |
+| Limites d’un élément de tableau blanc               | Dimensions `[16, 4000]` (`[0, 4000]` pour `arrow`/`path`), texte `500` car., `2 000` points/tracé                                      |
+| Limites du viewport et grille de tableau blanc      | `zoom` dans `[0,25 ; 3]`, `panX` et `panY` dans `[-10 000 ; 10 000]`, pas de grille `20 px`, historique `50` états                     |
+| Résultats visibles de la palette `Ctrl+K`           | `60` éléments maximum (`MAX_VISIBLE_RESULTS = 60`), éléments archivés exclus                                                           |
 
 ## Messages d’avertissement et d’erreur
 
@@ -114,7 +114,7 @@ Lorsqu’un mot de passe est fourni, l’archive ZIP interne (`level: 6`) est ch
 | `Échec de l’export SVG`      | `Impossible de générer le fichier SVG.`                                                                                                                                  | Erreur lors de la sérialisation locale du canevas SVG                                                      |
 | `Échec de l’export PNG`      | `Impossible de générer l’image PNG.`                                                                                                                                     | Erreur lors du rendu local du SVG vers `<canvas>`                                                          |
 | `Échec de l’export Markdown` | `Impossible d’enregistrer le fichier localement.`                                                                                                                        | Erreur d’écriture disque hors annulation utilisateur (`AbortError`)                                        |
-| `Aucune tâche datée`         | `Ajoutez une date d’échéance à au moins une tâche pour exporter un fichier .ics.`                                                                                        | Export `.ics` déclenché alors qu’aucune tâche filtrée n’a d’échéance                                       |
+| `Aucune tâche datée`         | `Ajoutez une date d’échéance à au moins une tâche pour exporter un fichier .ics.`                                                                                        | Export `.ics` déclenché alors qu’aucune tâche active filtrée n’a d’échéance                                |
 | `Échec de l’export .ics`     | `Impossible d’enregistrer le fichier calendrier localement.`                                                                                                             | Erreur d’écriture disque lors de l’export `.ics`                                                           |
 | `Liste de contrôle vide`     | `Ajoutez au moins une étape avant d’enregistrer un modèle.`                                                                                                              | Tentative d’enregistrement d’un modèle de checklist sans étape                                             |
 | `Canevas vide`               | `Ajoutez au moins une forme, un post-it ou une flèche avant d’enregistrer un modèle.`                                                                                    | Tentative d’enregistrement d’un modèle depuis un tableau blanc sans élément non-image                      |

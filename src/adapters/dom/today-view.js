@@ -1,7 +1,16 @@
 /** @import { AppCommand, AppState, Note, StoreEffect, Task, Whiteboard } from '../../types.d.ts' */
 
-import { diffIsoDays, formatFullDateFr, formatShortDateFr } from '../../core/dates.js';
-import { getTaskRecurrenceLabel, getTaskStatusMeta } from '../../core/model.js';
+import {
+  diffIsoDays,
+  formatFullDateFr,
+  formatShortDateFr,
+  isOffHoursDueTime,
+} from '../../core/dates.js';
+import {
+  getDefaultTerminalTaskStatusId,
+  getTaskRecurrenceLabel,
+  getTaskStatusMeta,
+} from '../../core/model.js';
 import { selectProjectById, selectTodaySummary } from '../../core/store.js';
 import { notify } from './app-shell.js';
 import { setTooltip } from './tooltip.js';
@@ -69,7 +78,7 @@ export function renderTodayView({
   const state = store.getState();
   const summary = selectTodaySummary(state);
   const configuredStatuses = state.preferences.taskStatuses;
-  const hasDoneStatus = configuredStatuses.some((s) => s.id === 'done');
+  const terminalStatusId = getDefaultTerminalTaskStatusId(configuredStatuses);
 
   // Header
   const header = document.createElement('div');
@@ -234,6 +243,22 @@ export function renderTodayView({
     const side = document.createElement('div');
     side.className = 'lc-today-item__side';
 
+    if (task.dueTime) {
+      const offHours = isOffHoursDueTime(task.dueTime);
+      const timeBadge = document.createElement('span');
+      timeBadge.className = offHours ? 'cv-badge lc-offhours-pill cv-num' : 'cv-badge cv-num';
+      if (offHours) {
+        const moonIc = document.createElement('i');
+        moonIc.className = 'ph ph-moon cv-icon';
+        moonIc.setAttribute('aria-hidden', 'true');
+        timeBadge.append(moonIc, document.createTextNode(` ${task.dueTime}`));
+        timeBadge.setAttribute('title', 'Créneau 18h–7h');
+      } else {
+        timeBadge.textContent = task.dueTime;
+      }
+      side.append(timeBadge);
+    }
+
     if (task.recurrence) {
       const recBadge = document.createElement('span');
       recBadge.className = 'cv-badge cv-badge--info';
@@ -257,7 +282,7 @@ export function renderTodayView({
     }
     side.append(badge);
 
-    if (showCompleteBtn && hasDoneStatus && !state.readOnly) {
+    if (showCompleteBtn && terminalStatusId && !state.readOnly) {
       const doneBtn = document.createElement('button');
       doneBtn.type = 'button';
       doneBtn.className = 'cv-btn cv-btn--ghost cv-btn--icon cv-btn--sm';
@@ -272,7 +297,7 @@ export function renderTodayView({
         const { state: nextState } = store.dispatch({
           type: 'update_task',
           id: task.id,
-          patch: { status: 'done' },
+          patch: { status: terminalStatusId },
           now: new Date().toISOString(),
         });
         const spawned = nextState.tasks.find((t) => !prevIds.has(t.id));

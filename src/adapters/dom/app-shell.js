@@ -399,6 +399,7 @@ const VIEW_TITLES = {
   calendar: 'Calendrier',
   notes: 'Notes',
   whiteboards: 'Tableaux blancs',
+  archives: 'Archives',
 };
 
 /**

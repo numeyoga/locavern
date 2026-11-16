@@ -7,6 +7,7 @@ import {
   selectAllTags,
   selectNotes,
   selectProjectById,
+  selectProjects,
   selectTemplates,
 } from '../../core/store.js';
 import { instantiateNoteTemplate } from '../../core/templates.js';
@@ -49,6 +50,7 @@ export function renderNotesView({
   onNavigateLocalRef,
 }) {
   const initialState = store.getState();
+  const initialActiveProjects = selectProjects(initialState);
 
   const header = document.createElement('div');
   header.className = 'lc-view-header';
@@ -70,11 +72,18 @@ export function renderNotesView({
   optNone.value = 'none';
   optNone.textContent = 'Sans projet';
   projectFilter.append(optAll, optNone);
-  for (const p of initialState.projects) {
+  for (const p of initialActiveProjects) {
     const opt = document.createElement('option');
     opt.value = p.id;
     opt.textContent = p.name;
     projectFilter.append(opt);
+  }
+  if (
+    filters.projectId !== 'all' &&
+    filters.projectId !== null &&
+    !initialActiveProjects.some((p) => p.id === filters.projectId)
+  ) {
+    filters.projectId = 'all';
   }
   projectFilter.value = filters.projectId === 'all' ? 'all' : (filters.projectId ?? 'none');
   projectWrap.append(projectFilter);
@@ -286,7 +295,7 @@ export function renderNotesView({
       noProjOpt.value = '';
       noProjOpt.textContent = 'Sans projet';
       projSelect.append(noProjOpt);
-      for (const p of state.projects) {
+      for (const p of selectProjects(state)) {
         const opt = document.createElement('option');
         opt.value = p.id;
         opt.textContent = p.name;
@@ -366,6 +375,13 @@ export function renderNotesView({
             },
             now: new Date().toISOString(),
           });
+        } catch (err) {
+          notify({
+            status: 'danger',
+            title: 'Enregistrement impossible',
+            text: err instanceof Error ? err.message : 'Erreur de validation.',
+          });
+          return;
         } finally {
           dispatchingInlineUpdate = false;
         }
@@ -482,7 +498,7 @@ export function renderNotesView({
         const slug =
           fresh.title
             .normalize('NFD')
-            .replace(/[̀-ͯ]/g, '')
+            .replace(/[\u0300-\u036f]/g, '')
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, '-')
             .replace(/^-|-$/g, '') || 'note';
@@ -520,6 +536,28 @@ export function renderNotesView({
         const freshNote =
           store.getState().notes.find((n) => n.id === currentNote.id) ?? currentNote;
         onOpenNoteDialog?.({ note: freshNote });
+      });
+
+      const archiveBtn = document.createElement('button');
+      archiveBtn.type = 'button';
+      archiveBtn.id = 'btn-archive-note';
+      archiveBtn.className = 'cv-btn cv-btn--sm';
+      archiveBtn.disabled = readOnly;
+      archiveBtn.textContent = 'Archiver';
+      archiveBtn.setAttribute('aria-label', `Archiver la note « ${currentNote.title} »`);
+      archiveBtn.addEventListener('click', () => {
+        flushPending?.();
+        store.dispatch({
+          type: 'toggle_archive_note',
+          id: currentNote.id,
+          archived: true,
+          now: new Date().toISOString(),
+        });
+        notify({
+          status: 'info',
+          title: 'Note archivée',
+          text: `${currentNote.title} déplacée vers les archives.`,
+        });
       });
 
       const saveBtn = document.createElement('button');
@@ -605,7 +643,7 @@ export function renderNotesView({
         },
       });
 
-      actions.append(openDialogBtn, duplicateBtn, exportMdBtn, deleteBtn, saveBtn);
+      actions.append(openDialogBtn, duplicateBtn, exportMdBtn, archiveBtn, deleteBtn, saveBtn);
       footer.append(statusNote, actions);
       editorCard.append(
         metaRow,

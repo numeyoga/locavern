@@ -1,8 +1,13 @@
 /** @import { AppCommand, AppState, StoreEffect, Task, TaskPriority, TaskStatus, TaskStatusFilter } from '../../types.d.ts' */
 
-import { classifyDueDateUrgency, getTodayIsoDate } from '../../core/dates.js';
-import { getTaskRecurrenceLabel, getTaskStatusMeta } from '../../core/model.js';
-import { selectAllTags, selectProjectById, selectTasks } from '../../core/store.js';
+import { classifyDueDateUrgency, getTodayIsoDate, isOffHoursDueTime } from '../../core/dates.js';
+import {
+  getDefaultInitialTaskStatusId,
+  getTaskRecurrenceLabel,
+  getTaskStatusMeta,
+  getTaskStatusRole,
+} from '../../core/model.js';
+import { selectAllTags, selectProjectById, selectProjects, selectTasks } from '../../core/store.js';
 import { confirmAction, notify } from './app-shell.js';
 import { createTaskWorkspaceHeader } from './task-workspace-header.js';
 
@@ -66,6 +71,7 @@ export function renderTaskListView({
   onOpenTaskDrawer,
 }) {
   const state = store.getState();
+  const activeProjects = selectProjects(state);
 
   const header = createTaskWorkspaceHeader({
     state,
@@ -73,7 +79,7 @@ export function renderTaskListView({
     onOpenNewTask: () => onOpenTaskDrawer(undefined),
   });
 
-  if (state.projects.length === 0) {
+  if (activeProjects.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'cv-empty';
     const iconBox = document.createElement('span');
@@ -85,10 +91,13 @@ export function renderTaskListView({
 
     const title = document.createElement('p');
     title.className = 'cv-empty__title';
-    title.textContent = 'Créez un premier projet pour commencer';
+    title.textContent =
+      state.projects.length === 0
+        ? 'Créez un premier projet pour commencer'
+        : 'Aucun projet actif pour le moment';
 
     const desc = document.createElement('p');
-    desc.textContent = 'Chaque tâche est rattachée à un projet local sur cet appareil.';
+    desc.textContent = 'Chaque tâche est rattachée à un projet actif local sur cet appareil.';
 
     const cta = document.createElement('button');
     cta.type = 'button';
@@ -274,14 +283,13 @@ export function renderTaskListView({
     quickProjectSelect.className = 'cv-input lc-quick-add__project';
     quickProjectSelect.disabled = state.readOnly;
     quickProjectSelect.setAttribute('aria-label', 'Projet cible pour l’ajout rapide');
-    for (const proj of state.projects) {
+    for (const proj of activeProjects) {
       const opt = document.createElement('option');
       opt.value = proj.id;
-      opt.textContent = proj.archived ? `${proj.name} (archivé)` : proj.name;
+      opt.textContent = proj.name;
       quickProjectSelect.append(opt);
     }
-    const firstActive = state.projects.find((p) => !p.archived) ?? state.projects[0];
-    if (firstActive) quickProjectSelect.value = firstActive.id;
+    if (activeProjects[0]) quickProjectSelect.value = activeProjects[0].id;
   }
 
   const quickSubmitBtn = document.createElement('button');
@@ -312,13 +320,13 @@ export function renderTaskListView({
     const targetProjectId =
       latestState.preferences.selectedProjectId ??
       quickProjectSelect?.value ??
-      (latestState.projects.find((p) => !p.archived) ?? latestState.projects[0])?.id;
+      selectProjects(latestState)[0]?.id;
     if (!targetProjectId) return;
 
     const defaultStatus =
       filters.status !== 'all' && filters.status !== '__none__' && filters.status !== '__unknown__'
         ? filters.status
-        : (latestState.preferences.taskStatuses[0]?.id ?? null);
+        : getDefaultInitialTaskStatusId(latestState.preferences.taskStatuses);
     const defaultPriority = filters.priority !== 'all' ? filters.priority : 'medium';
 
     store.dispatch({
@@ -442,9 +450,13 @@ export function renderTaskListView({
     for (const task of tasks) {
       const tr = document.createElement('tr');
       const statusMeta = getTaskStatusMeta(task.status, configuredStatuses);
+      const statusRole = getTaskStatusRole(task.status, configuredStatuses);
       if (!statusMeta.known) {
         tr.classList.add('lc-task-row--unmapped');
         tr.dataset.statusUnknown = 'true';
+      }
+      if (statusRole) {
+        tr.dataset.statusRole = statusRole;
       }
 
       const tdTitle = document.createElement('td');
@@ -479,36 +491,79 @@ export function renderTaskListView({
       tdProject.textContent = selectProjectById(currentState, task.projectId)?.name ?? 'Projet';
 
       const tdStatus = document.createElement('td');
-      tdStatus.append(
+      const statusCellWrap = document.createElement('span');
+      statusCellWrap.className = 'lc-status-cell';
+      statusCellWrap.append(
         makeBadge(statusMeta.label, statusMeta.badgeClass, {
           warningIcon: !statusMeta.known,
           statusBadgeKind: statusMeta.kind,
         }),
       );
+      if (statusRole === 'initial') {
+        const roleTag = document.createElement('span');
+        roleTag.className = 'cv-badge cv-badge--accent';
+        roleTag.dataset.statusRole = 'initial';
+        roleTag.textContent = 'Initial';
+        statusCellWrap.append(roleTag);
+      } else if (statusRole === 'terminal') {
+        const roleTag = document.createElement('span');
+        roleTag.className = 'cv-badge cv-badge--success';
+        roleTag.dataset.statusRole = 'terminal';
+        roleTag.textContent = 'Terminal';
+        statusCellWrap.append(roleTag);
+      }
+      tdStatus.append(statusCellWrap);
 
       const tdPriority = document.createElement('td');
       const priorityInfo = PRIORITY_META[task.priority];
       tdPriority.append(makeBadge(priorityInfo.label, priorityInfo.badgeClass));
 
-      const urgency = classifyDueDateUrgency(task.dueDate, todayIso, task.status);
+      const urgency = classifyDueDateUrgency(
+        task.dueDate,
+        todayIso,
+        task.status,
+        statusRole === 'terminal',
+      );
       const tdDue = document.createElement('td');
       tdDue.className = 'cv-num';
-      if (urgency === 'overdue' || urgency === 'today' || urgency === 'this_week') {
-        tr.dataset.dueUrgency = urgency;
-        tr.classList.add(`lc-task-row--${urgency}`);
+      const dueText = task.dueDate
+        ? task.dueTime
+          ? `${task.dueDate} · ${task.dueTime}`
+          : task.dueDate
+        : '';
+      if (
+        urgency === 'overdue' ||
+        urgency === 'today' ||
+        urgency === 'this_week' ||
+        isOffHoursDueTime(task.dueTime)
+      ) {
+        if (urgency === 'overdue' || urgency === 'today' || urgency === 'this_week') {
+          tr.dataset.dueUrgency = urgency;
+          tr.classList.add(`lc-task-row--${urgency}`);
+        }
         const wrapDue = document.createElement('span');
         wrapDue.className = 'lc-due-cell';
         const dateSpan = document.createElement('span');
-        dateSpan.textContent = task.dueDate ?? '';
-        const urgMeta = URGENCY_META[urgency];
-        const urgBadge = makeBadge(urgMeta.label, urgMeta.badgeClass, {
-          iconName: urgMeta.iconName,
-        });
-        urgBadge.dataset.dueBadge = urgency;
-        wrapDue.append(dateSpan, urgBadge);
+        dateSpan.textContent = dueText || '—';
+        wrapDue.append(dateSpan);
+        if (isOffHoursDueTime(task.dueTime)) {
+          const nightBadge = makeBadge('18h–7h', 'cv-badge cv-badge--info lc-offhours-pill', {
+            iconName: 'ph-moon',
+          });
+          nightBadge.dataset.offhours = 'true';
+          wrapDue.append(nightBadge);
+        }
+        if (urgency === 'overdue' || urgency === 'today' || urgency === 'this_week') {
+          const urgMeta = URGENCY_META[urgency];
+          const urgBadge = makeBadge(urgMeta.label, urgMeta.badgeClass, {
+            iconName: urgMeta.iconName,
+          });
+          urgBadge.dataset.dueBadge = urgency;
+          wrapDue.append(urgBadge);
+        }
         tdDue.append(wrapDue);
       } else {
-        tdDue.textContent = task.dueDate ?? '—';
+        tdDue.textContent = dueText || '—';
       }
 
       const tdActions = document.createElement('td');
@@ -568,6 +623,22 @@ export function renderTaskListView({
       editBtn.setAttribute('aria-label', `Ouvrir « ${task.title} »`);
       editBtn.addEventListener('click', () => onOpenTaskDrawer(task));
 
+      const archiveBtn = document.createElement('button');
+      archiveBtn.type = 'button';
+      archiveBtn.className = 'cv-btn cv-btn--ghost cv-btn--sm';
+      archiveBtn.disabled = currentState.readOnly;
+      archiveBtn.textContent = 'Archiver';
+      archiveBtn.setAttribute('aria-label', `Archiver « ${task.title} »`);
+      archiveBtn.addEventListener('click', () => {
+        store.dispatch({
+          type: 'toggle_archive_task',
+          id: task.id,
+          archived: true,
+          now: new Date().toISOString(),
+        });
+        notify({ status: 'info', title: 'Tâche archivée', text: task.title });
+      });
+
       const delBtn = document.createElement('button');
       delBtn.type = 'button';
       delBtn.className = 'cv-btn cv-btn--ghost cv-btn--sm';
@@ -591,7 +662,7 @@ export function renderTaskListView({
         notify({ status: 'info', title: 'Tâche placée dans la corbeille', text: task.title });
       });
 
-      actions.append(quickStatus, editBtn, delBtn);
+      actions.append(quickStatus, editBtn, archiveBtn, delBtn);
       tdActions.append(actions);
 
       tr.append(tdTitle, tdProject, tdStatus, tdPriority, tdDue, tdActions);

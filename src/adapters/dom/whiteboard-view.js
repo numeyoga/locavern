@@ -1,7 +1,12 @@
 /** @import { AppCommand, AppState, LocalRef, StoreEffect, Whiteboard, WhiteboardElement, WhiteboardViewport } from '../../types.d.ts' */
 
 import { collectWhiteboardAssetIds } from '../../core/model.js';
-import { selectProjectById, selectTemplates, selectWhiteboards } from '../../core/store.js';
+import {
+  selectProjectById,
+  selectProjects,
+  selectTemplates,
+  selectWhiteboards,
+} from '../../core/store.js';
 import { instantiateWhiteboardTemplate } from '../../core/templates.js';
 import { createTemplatePicker } from './template-picker.js';
 import { initTooltips } from './tooltip.js';
@@ -80,6 +85,7 @@ export function renderWhiteboardView({
   onNavigateLocalRef,
 }) {
   const initialState = store.getState();
+  const initialActiveProjects = selectProjects(initialState);
 
   const header = document.createElement('div');
   header.className = 'lc-view-header';
@@ -101,11 +107,18 @@ export function renderWhiteboardView({
   optNone.value = 'none';
   optNone.textContent = 'Sans projet';
   projectFilter.append(optAll, optNone);
-  for (const p of initialState.projects) {
+  for (const p of initialActiveProjects) {
     const opt = document.createElement('option');
     opt.value = p.id;
     opt.textContent = p.name;
     projectFilter.append(opt);
+  }
+  if (
+    filters.projectId !== 'all' &&
+    filters.projectId !== null &&
+    !initialActiveProjects.some((p) => p.id === filters.projectId)
+  ) {
+    filters.projectId = 'all';
   }
   projectFilter.value = filters.projectId === 'all' ? 'all' : (filters.projectId ?? 'none');
   projectWrap.append(projectFilter);
@@ -289,7 +302,7 @@ export function renderWhiteboardView({
       noProjOpt.value = '';
       noProjOpt.textContent = 'Sans projet';
       projSelect.append(noProjOpt);
-      for (const p of state.projects) {
+      for (const p of selectProjects(state)) {
         const opt = document.createElement('option');
         opt.value = p.id;
         opt.textContent = p.name;
@@ -360,6 +373,13 @@ export function renderWhiteboardView({
             },
             now: new Date().toISOString(),
           });
+        } catch (err) {
+          notify({
+            status: 'danger',
+            title: 'Enregistrement impossible',
+            text: err instanceof Error ? err.message : 'Erreur de validation.',
+          });
+          return;
         } finally {
           dispatchingInlineUpdate = false;
         }
@@ -626,6 +646,28 @@ export function renderWhiteboardView({
         }
       });
 
+      const archiveBtn = document.createElement('button');
+      archiveBtn.type = 'button';
+      archiveBtn.id = 'btn-archive-whiteboard';
+      archiveBtn.className = 'cv-btn cv-btn--sm';
+      archiveBtn.disabled = readOnly;
+      archiveBtn.textContent = 'Archiver';
+      archiveBtn.setAttribute('aria-label', `Archiver le tableau blanc « ${currentWb.title} »`);
+      archiveBtn.addEventListener('click', () => {
+        flushPending?.();
+        store.dispatch({
+          type: 'toggle_archive_whiteboard',
+          id: currentWb.id,
+          archived: true,
+          now: new Date().toISOString(),
+        });
+        notify({
+          status: 'info',
+          title: 'Tableau blanc archivé',
+          text: `${currentWb.title} déplacé vers les archives.`,
+        });
+      });
+
       const saveBtn = document.createElement('button');
       saveBtn.type = 'button';
       saveBtn.id = 'btn-save-whiteboard';
@@ -742,7 +784,7 @@ export function renderWhiteboardView({
         },
       });
 
-      actions.append(openDialogBtn, exportSvgBtn, exportPngBtn, deleteBtn, saveBtn);
+      actions.append(openDialogBtn, exportSvgBtn, exportPngBtn, archiveBtn, deleteBtn, saveBtn);
       footer.append(statusEl, actions);
       editorCard.append(metaRow, linkEditor.element, canvasHost, footer, wbTemplatePicker.element);
     }

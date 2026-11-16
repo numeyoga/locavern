@@ -1,7 +1,7 @@
 ---
 version: '0.2.0'
 cree_le: 2026-11-13
-mis_a_jour_le: 2026-11-15
+mis_a_jour_le: 2026-11-16
 ---
 
 # Interface, vues et raccourcis clavier
@@ -20,6 +20,7 @@ Description factuelle de l’interface utilisateur, des champs, des valeurs par 
 - [Vue Calendrier](#vue-calendrier)
 - [Vue Notes et éditeur enrichi](#vue-notes-et-éditeur-enrichi)
 - [Vue Tableaux blancs et canevas SVG](#vue-tableaux-blancs-et-canevas-svg)
+- [Vue Archives](#vue-archives)
 - [Corbeille locale et Sauvegardes](#corbeille-locale-et-sauvegardes)
 - [Palette de commandes et raccourcis clavier](#palette-de-commandes-et-raccourcis-clavier)
 
@@ -33,11 +34,12 @@ Description factuelle de l’interface utilisateur, des champs, des valeurs par 
   - `Calendrier` (`#calendar`) ;
   - `Notes` (`#notes`) ;
   - `Tableaux blancs` (`#whiteboards`) ;
+  - `Archives` (`#archives`, avec badge compteur `#nav-archives-count` masqué lorsque aucune archive n’est présente) ;
   - Groupe `Données` : `Sauvegardes` (`#nav-backup-btn`, ouvre `#modal-backup`) et `Corbeille` (`#nav-trash-btn`, ouvre `#modal-trash`, avec badge compteur `#nav-trash-count` masqué lorsque la corbeille est vide) ;
   - Groupe `Préférences` : `Affichage` (`#nav-preferences-btn`, ouvre `#modal-preferences`).
   - Sur écran étroit (< 1024 px), le bouton menu (`Ouvrir le menu`) dans la barre supérieure ouvre et ferme la barre latérale.
 - **Barre supérieure** :
-  - Titre de la vue active (`Aujourd’hui`, `Tâches`, `Projets`, `Calendrier`, `Notes` ou `Tableaux blancs`) ;
+  - Titre de la vue active (`Aujourd’hui`, `Tâches`, `Projets`, `Calendrier`, `Notes`, `Tableaux blancs` ou `Archives`) ;
   - Bouton `Rechercher` (`Ctrl+K`) ouvrant la palette de commandes (`#cmd-menu`) ;
   - Interrupteur `Sombre` basculant entre thème clair et thème sombre (la préférence est conservée localement sous la clé `locavern-color-scheme` ; sinon l’application suit la préférence système `prefers-color-scheme`) ;
   - Bouton `Sauvegarder` (`#topbar-backup-btn`) ouvrant la fenêtre `Sauvegardes et stockage`.
@@ -58,106 +60,109 @@ Description factuelle de l’interface utilisateur, des champs, des valeurs par 
 
 ## Vue Aujourd’hui
 
-- **En-tête** : titre `Aujourd’hui`, date du jour formatée en français, boutons `Nouvelle tâche`, `Nouvelle note` et `Nouveau tableau blanc` (désactivés en lecture seule ; `Nouvelle tâche` ouvre la création de projet si aucun projet n’existe).
-- **Indicateurs du jour** (`4` tuiles KPI) : `En retard`, `Pour aujourd’hui`, `Sous 7 jours`, `Priorités hautes`.
+- **En-tête** : titre `Aujourd’hui`, date du jour formatée en français, boutons `Nouvelle tâche`, `Nouvelle note` et `Nouveau tableau blanc` (désactivés en lecture seule ; `Nouvelle tâche` ouvre la création de projet si aucun projet actif n’existe).
+- **Indicateurs du jour** (`4` tuiles KPI) : `En retard`, `Pour aujourd’hui`, `Sous 7 jours`, `Priorités hautes` (les tâches archivées ou au statut **Terminal** sont exclues des compteurs d’urgence et d’ouverture).
 - **Sections** :
-  - `Tâches en retard` : tâches non terminées (`status !== 'done'`) dont `dueDate < aujourd’hui`, avec badge `<n> j de retard` et action `Marquer terminée` (si le statut `done` existe dans `preferences.taskStatuses`, hors lecture seule) ;
-  - `Échéances proches` : tâches non terminées dues aujourd’hui (`Aujourd’hui`) ou dans les `7` prochains jours ;
-  - `Priorités hautes` : tâches ouvertes de priorité `Haute` avec statut et date éventuelle ;
-  - `Éléments récents` : jusqu’à `8` éléments (tâches, notes, tableaux blancs) triés par `updatedAt` décroissant.
+  - `Tâches en retard` : tâches non archivées et non terminales dont `dueDate < aujourd’hui`, avec badge `<n> j de retard` et action `Marquer terminée` (vers le statut terminal par défaut, hors lecture seule) ;
+  - `Échéances proches` : tâches non archivées et non terminales dues aujourd’hui (`Aujourd’hui`) ou dans les `7` prochains jours ;
+  - `Priorités hautes` : tâches non archivées et non terminales de priorité `Haute` avec statut et date/heure éventuelle ;
+  - `Éléments récents` : jusqu’à `8` éléments actifs (tâches, notes, tableaux blancs) triés par `updatedAt` décroissant.
 
 ## Vue Tâches en mode Liste
 
 En-tête partagé des vues tâches :
 
-| Contrôle                | Options / comportement                                                                                                   | Valeur par défaut                             |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- |
-| Sélecteur de projet     | `Tous les projets`, ou l’un des projets existants (avec suffixe `(archivé)` si archivé)                                  | `Tous les projets` (puis premier projet créé) |
-| Mode d’affichage        | `Liste`, `Kanban`                                                                                                        | `Liste`                                       |
-| Bouton `Statuts`        | Ouvre la fenêtre `Statuts du Kanban` (`#modal-statuses`) ; désactivé en lecture seule                                    | —                                             |
-| Bouton `Nouvelle tâche` | Ouvre la saisie de création (tiroir latéral ou modale selon les préférences) ; désactivé sans projet ou en lecture seule | —                                             |
+| Contrôle                | Options / comportement                                                                                                         | Valeur par défaut                             |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- |
+| Sélecteur de projet     | `Tous les projets`, ou l’un des projets existants (avec suffixe `(archivé)` si archivé)                                        | `Tous les projets` (puis premier projet créé) |
+| Mode d’affichage        | `Liste`, `Kanban`                                                                                                              | `Liste`                                       |
+| Bouton `Statuts`        | Ouvre la fenêtre `Statuts du Kanban` (`#modal-statuses`) ; désactivé en lecture seule                                          | —                                             |
+| Bouton `Nouvelle tâche` | Ouvre la saisie de création (tiroir latéral ou modale selon les préférences) ; désactivé sans projet actif ou en lecture seule | —                                             |
 
 Barre d’ajout rapide, filtres et tableau (`Liste`) :
 
-| Élément             | Valeurs disponibles                                                                       | Comportement                                                                                                                                                                                                                                  |
-| ------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Ajout rapide        | `#list-quick-add-input` (`Ajout rapide d’une tâche…`), projet cible, `Ajouter rapidement` | Crée une tâche dans le statut filtré (ou le premier statut configuré) et la priorité filtrée (ou `Moyenne`)                                                                                                                                   |
-| `Rechercher`        | Texte libre (`Titre, description, checklist`)                                             | Filtre multi-mots insensible à la casse et aux accents sur le titre, la description, les étapes de checklist et les étiquettes                                                                                                                |
-| `Statut`            | `Tous les statuts`, statuts configurés, `Sans statut` (`__none__`), `Statut inconnu`      | Filtre exact sur un statut configuré, sur les tâches sans statut (`null`) ou sur les tâches dont l’identifiant de statut ne figure plus dans le Kanban                                                                                        |
-| `Priorité`          | `Toutes les priorités`, `Haute`, `Moyenne`, `Basse`                                       | Filtre exact sur la priorité                                                                                                                                                                                                                  |
-| `Étiquette`         | `Toutes les étiquettes` ou `#<nom>`                                                       | Filtre sur les tâches portant l’étiquette sélectionnée                                                                                                                                                                                        |
-| `Tri`               | `Ordre Kanban`, `Échéance`, `Priorité`                                                    | `Échéance` place les tâches datées avant celles sans date ; `Priorité` trie de `Haute` à `Basse`                                                                                                                                              |
-| Colonnes du tableau | `Tâche`, `Projet`, `Statut`, `Priorité`, `Échéance`, `Actions`                            | `Tâche` affiche le titre, le badge de récurrence éventuel et les puces `#<étiquette>` ; `Échéance` affiche les badges `En retard`, `Aujourd’hui`, `Cette semaine` ; `Actions` contient le sélecteur rapide de statut, `Ouvrir` et `Supprimer` |
-| Statut non résolu   | Badge d’avertissement `Sans statut` ou `Statut inconnu (<nom>)` + ligne mise en avant     | Identifie visuellement les tâches absentes du Kanban afin que l’utilisateur puisse leur attribuer un statut actif                                                                                                                             |
+| Élément             | Valeurs disponibles                                                                       | Comportement                                                                                                                                                                                                                                                                       |
+| ------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ajout rapide        | `#list-quick-add-input` (`Ajout rapide d’une tâche…`), projet cible, `Ajouter rapidement` | Crée une tâche dans le statut filtré (ou le statut initial par défaut) et la priorité filtrée (ou `Moyenne`)                                                                                                                                                                       |
+| `Rechercher`        | Texte libre (`Titre, description, checklist`)                                             | Filtre multi-mots insensible à la casse et aux accents sur le titre, la description, les étapes de checklist et les étiquettes                                                                                                                                                     |
+| `Statut`            | `Tous les statuts`, statuts configurés, `Sans statut` (`__none__`), `Statut inconnu`      | Filtre exact sur un statut configuré, sur les tâches sans statut (`null`) ou sur les tâches dont l’identifiant de statut ne figure plus dans le Kanban                                                                                                                             |
+| `Priorité`          | `Toutes les priorités`, `Haute`, `Moyenne`, `Basse`                                       | Filtre exact sur la priorité                                                                                                                                                                                                                                                       |
+| `Étiquette`         | `Toutes les étiquettes` ou `#<nom>`                                                       | Filtre sur les tâches portant l’étiquette sélectionnée                                                                                                                                                                                                                             |
+| `Tri`               | `Ordre Kanban`, `Échéance`, `Priorité`                                                    | `Échéance` place les tâches datées avant celles sans date (tri par date puis `dueTime`) ; `Priorité` trie de `Haute` à `Basse`                                                                                                                                                     |
+| Colonnes du tableau | `Tâche`, `Projet`, `Statut`, `Priorité`, `Échéance`, `Actions`                            | `Statut` affiche le badge du statut et son badge rôle éventuel (`Initial` / `Terminal`) ; `Échéance` affiche date, heure éventuelle, pastille `18h–7h` et badges `En retard`, `Aujourd’hui`, `Cette semaine` ; `Actions` contient statut rapide, `Ouvrir`, `Archiver`, `Supprimer` |
+| Statut non résolu   | Badge d’avertissement `Sans statut` ou `Statut inconnu (<nom>)` + ligne mise en avant     | Identifie visuellement les tâches absentes du Kanban afin que l’utilisateur puisse leur attribuer un statut actif                                                                                                                                                                  |
 
 ## Vue Tâches en mode Kanban
 
-- **Colonnes paramétrables** : correspond à `preferences.taskStatuses` (par défaut : `À faire` (`todo`), `En cours` (`in_progress`), `Terminé` (`done`)). Chaque en-tête affiche un compteur, un bouton `+` (ouvrant la création pré-remplie dans la colonne) et une barre d’ajout rapide (`Ajout rapide…` / `Ajouter`).
+- **Colonnes paramétrables** : correspond à `preferences.taskStatuses` (par défaut : `À faire` (`todo`, `Initial`), `En cours` (`in_progress`), `Terminé` (`done`, `Terminal`)). Chaque en-tête affiche le badge de rôle éventuel (`Initial` ou `Terminal`), un compteur, un bouton `+` (ouvrant la création pré-remplie dans la colonne) et une barre d’ajout rapide (`Ajout rapide…` / `Ajouter`).
 - **Tâches hors colonnes (`#kanban-unmapped-alert`)** : les tâches `Sans statut` (`status: null`) ou portant un identifiant absent de `preferences.taskStatuses` ne figurent pas dans les colonnes ; lorsqu’il en existe dans le périmètre filtré, un bandeau signale `<n> tâche(s) hors colonnes (sans statut ou à statut inconnu) :` avec ouverture directe et sélecteur `Placer dans une colonne…`.
 - **Filtres** : `Rechercher sur le tableau` (`Titre, description, checklist`), `Priorité`, `Échéance` (`Toutes les échéances`, `En retard`, `Aujourd’hui`, `Sous 7 jours`, `Sans échéance`) et `Étiquette` (`Toutes les étiquettes`, `#<nom>`).
-- **Contenu d’une carte** : titre cliquable, bouton menu `Actions` (`⋮`), badge de priorité, badge d’échéance (`En retard`, `Aujourd’hui`, `Cette semaine`) et date, badge de récurrence, puces `#<étiquette>`, compteur de liste de contrôle `fait/total` (si non vide), étiquette du nom de projet (uniquement quand `Tous les projets` est sélectionné).
-- **Menu d’actions d’une carte** : `Ouvrir les détails`, `Déplacer vers <autre colonne>`, `Monter dans la colonne` (si non première de son projet), `Descendre dans la colonne` (si non dernière de son projet), `Supprimer` (envoi en corbeille avec confirmation). En lecture seule, seul `Ouvrir les détails` est présent.
-- **Récurrence au déplacement** : déplacer une tâche récurrente vers `done` crée une nouvelle tâche sur le premier statut configuré (`Prochaine occurrence créée`).
+- **Contenu d’une carte** : titre cliquable, bouton menu `Actions` (`⋮`), badge de priorité, badge d’échéance (`En retard`, `Aujourd’hui`, `Cette semaine`, supprimé sur statut terminal) et date/heure, badge de récurrence, puces `#<étiquette>`, compteur de liste de contrôle `fait/total` (si non vide), étiquette du nom de projet (uniquement quand `Tous les projets` est sélectionné).
+- **Menu d’actions d’une carte** : `Ouvrir les détails`, `Déplacer vers <autre colonne>`, `Monter dans la colonne` (si non première de son projet), `Descendre dans la colonne` (si non dernière de son projet), `Archiver`, `Supprimer` (envoi en corbeille avec confirmation). En lecture seule, seul `Ouvrir les détails` est présent.
+- **Récurrence au déplacement** : déplacer une tâche récurrente vers un statut **Terminal** crée une nouvelle tâche sur le statut **Initial** configuré (ou le premier statut) avec `Prochaine occurrence créée`.
 
 ## Fenêtre Statuts du Kanban
 
 Accessible depuis le bouton `Statuts` de l’en-tête `Tâches`, depuis `Préférences d’affichage` (`Configurer les statuts du Kanban`) ou via la palette de commandes (`Configurer les statuts du Kanban`).
 
-| Élément                   | Contrainte / comportement                                                                                                           |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Liste des statuts         | Jusqu’à `12` statuts ; chaque ligne permet de modifier le libellé (`40` caractères max.), monter, descendre ou supprimer la colonne |
-| `Ajouter un statut`       | Crée un nouveau statut avec identifiant slugifié unique et libellé obligatoire (`40` caractères max.)                               |
-| `Valeurs par défaut`      | Restaure les trois statuts initiaux (`À faire`, `En cours`, `Terminé`) dans la liste d’édition                                      |
-| Suppression d’une colonne | Ne supprime aucune tâche : les tâches rattachées au statut retiré passent en `Statut inconnu`                                       |
+| Élément                   | Contrainte / comportement                                                                                                                                                                     |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Liste des statuts         | Jusqu’à `12` statuts ; chaque ligne permet de modifier le libellé (`60` caractères max.), choisir le rôle (`Intermédiaire`, `Initial`, `Terminal`), monter, descendre ou supprimer la colonne |
+| `Ajouter un statut`       | Crée un nouveau statut avec identifiant slugifié unique, libellé obligatoire (`60` caractères max.) et rôle (`Intermédiaire`, `Initial` ou `Terminal`)                                        |
+| `Valeurs par défaut`      | Restaure les trois statuts par défaut (`À faire` initial, `En cours` intermédiaire, `Terminé` terminal) dans la liste d’édition                                                               |
+| Règles Initial / Terminal | `isInitial` et `isTerminal` sont mutuellement exclusifs ; un statut terminal bloque la création de nouveaux liens (sortants et entrants) pour les tâches qui le portent                       |
+| Suppression d’une colonne | Ne supprime aucune tâche : les tâches rattachées au statut retiré passent en `Statut inconnu`                                                                                                 |
 
 ## Formulaire de tâche (tiroir latéral ou modale)
 
 S’affiche en `Tiroir latéral` par défaut ou en `Modale` selon le réglage de l’écran `Tâches` dans `Préférences d’affichage`.
 
-| Champ               | Type                                                                      | Obligatoire | Limite / défaut                                                                |
-| ------------------- | ------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------ |
-| `Titre`             | Texte                                                                     | Oui         | `200` caractères maximum                                                       |
-| `Projet`            | Liste déroulante                                                          | Oui         | Projet sélectionné ou premier projet                                           |
-| `Statut`            | Statuts configurés + `Sans statut` (et statut inconnu actuel si existant) | Non         | Premier statut configuré (ou statut de la colonne si ajouté via `+` du Kanban) |
-| `Priorité`          | `Basse`, `Moyenne`, `Haute`                                               | Oui         | `Moyenne`                                                                      |
-| `Échéance`          | Date (`AAAA-MM-JJ`)                                                       | Non         | Vide (`null`) ou date de la cellule en création depuis `Calendrier`            |
-| `Récurrence`        | `Aucune`, `Quotidienne`, `Hebdomadaire`, `Mensuelle`                      | Non         | `Aucune`                                                                       |
-| `Étiquettes`        | Saisie + suggestions + puces `#<nom>`                                     | Non         | `20` étiquettes max., `40` caractères/étiquette                                |
-| `Éléments liés`     | Sélecteur (`Choisir un élément à lier…`) + rétroliens `Lié depuis :`      | Non         | `50` liens internes max. (`task`, `note`, `whiteboard`)                        |
-| `Liste de contrôle` | Étapes à cocher + barre `Modèles de checklist`                            | Non         | `200` caractères par étape ; modèles intégrés + modèles personnels             |
-| `Description`       | Éditeur texte enrichi                                                     | Non         | Document vide                                                                  |
+| Champ               | Type                                                                 | Obligatoire | Limite / défaut                                                                   |
+| ------------------- | -------------------------------------------------------------------- | ----------- | --------------------------------------------------------------------------------- |
+| `Titre`             | Texte                                                                | Oui         | `200` caractères maximum                                                          |
+| `Projet`            | Liste déroulante                                                     | Oui         | Projet sélectionné ou premier projet actif                                        |
+| `Statut`            | Statuts configurés + `Sans statut` (et badge `Initial`/`Terminal`)   | Non         | Statut initial par défaut (ou statut de la colonne si ajouté via `+` du Kanban)   |
+| `Priorité`          | `Basse`, `Moyenne`, `Haute`                                          | Oui         | `Moyenne`                                                                         |
+| `Échéance et heure` | Date (`AAAA-MM-JJ`) + heure facultative (`HH:MM`)                    | Non         | Vide (`null`) ou date/heure de la cellule/créneau en création depuis `Calendrier` |
+| `Récurrence`        | `Aucune`, `Quotidienne`, `Hebdomadaire`, `Mensuelle`                 | Non         | `Aucune`                                                                          |
+| `Étiquettes`        | Saisie + suggestions + puces `#<nom>`                                | Non         | `20` étiquettes max., `40` caractères/étiquette                                   |
+| `Éléments liés`     | Sélecteur (`Choisir un élément à lier…`) + rétroliens `Lié depuis :` | Non         | `50` liens internes max. ; ajout désactivé si statut **Terminal**                 |
+| `Liste de contrôle` | Étapes à cocher + barre `Modèles de checklist`                       | Non         | `200` caractères par étape ; modèles intégrés + modèles personnels                |
+| `Description`       | Éditeur texte enrichi                                                | Non         | Document vide                                                                     |
 
-Actions du pied de fenêtre : `Supprimer` (en édition hors lecture seule, envoi en corbeille avec confirmation), `Annuler`, `Créer la tâche` / `Enregistrer`.
+Actions du pied de fenêtre : `Supprimer` et `Archiver` (en édition hors lecture seule), `Annuler`, `Créer la tâche` / `Enregistrer`.
 
 ## Vue Projets
 
-La saisie `Nouveau projet` / `Modifier le projet` s’affiche en `Modale` par défaut ou en `Tiroir latéral` selon le réglage de l’écran `Projets` dans `Préférences d’affichage`.
+La vue **Projets** affiche exclusivement les projets actifs (les projets archivés sont consultables et filtrables dans la vue **Archives**). La saisie `Nouveau projet` / `Modifier le projet` s’affiche en `Modale` par défaut ou en `Tiroir latéral` selon le réglage de l’écran `Projets` dans `Préférences d’affichage`.
 
 | Élément                 | Contrainte / comportement                                                                                                                                   |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Filtre d’état           | Contrôle segmenté `#project-archive-filter` : `Tous`, `Actifs`, `Archivés` (affiché lorsqu’au moins un projet existe)                                       |
 | `Nom du projet`         | Obligatoire, `120` caractères maximum                                                                                                                       |
 | `Description`           | Facultative, `1 000` caractères maximum                                                                                                                     |
-| Badges d’état           | `Actif` ou `Archivé`                                                                                                                                        |
-| Compteurs affichés      | Nombre de tâches, de notes et de tableaux blancs associés                                                                                                   |
-| Actions par carte       | `Ouvrir les tâches`, `Ouvrir les notes`, `Ouvrir les tableaux blancs`, `Modifier`, `Archiver` / `Désarchiver`, `Supprimer`                                  |
+| Badges d’état           | `Actif` (projets archivés déplacés dans la vue `Archives`)                                                                                                  |
+| Compteurs affichés      | Nombre de tâches, de notes et de tableaux blancs actifs associés                                                                                            |
+| Actions par carte       | `Ouvrir les tâches`, `Ouvrir les notes`, `Ouvrir les tableaux blancs`, `Modifier`, `Archiver`, `Supprimer`                                                  |
+| Archivage d’un projet   | Masque le projet et ses éléments des vues courantes ; un état vide propose `Ouvrir les archives` et `Créer un projet` si tous les projets sont archivés     |
 | Suppression d’un projet | Déplace le projet et ses tâches dans la `Corbeille` locale ; détache ses notes et tableaux blancs (`projectId` devient `null`, visibles dans `Sans projet`) |
 
 ## Vue Calendrier
 
-| Élément                   | Valeurs / comportement                                                                                                                                                    |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| En-tête                   | Sélecteur de projet (`Tous les projets` ou projet), échelle (`Mois` / `Semaine`), navigation (`Précédent`, `Aujourd’hui`, `Suivant`), `Exporter (.ics)`, `Nouvelle tâche` |
-| Grille `Mois` / `Semaine` | Semaines du lundi au dimanche (`Lun` à `Dim`) ; badge `Auj.` sur la date du jour ; bouton `+` sur chaque case pour créer une tâche à cette date                           |
-| Carte de tâche            | Clic pour ouvrir le détail, glisser-déposer vers une autre date, boutons rapides `−1 j` / `+1 j`, raccourcis clavier `Alt`/`Maj` + flèches                                |
-| Panneau `Sans échéance`   | Liste les tâches sans `dueDate` du projet sélectionné, avec glisser-déposer vers la grille et bouton `Planifier aujourd’hui`                                              |
-| Export `Exporter (.ics)`  | Génère `locavern-<projet                                                                                                                                                  | echeances>-AAAA-MM-JJ.ics` (`VEVENT` journée entière RFC 5545 pour les tâches datées filtrées) |
+| Élément                  | Valeurs / comportement                                                                                                                                                                                                 |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| En-tête                  | Sélecteur de projet (`Tous les projets` ou projet actif), échelle (`Mois` / `Semaine`), navigation (`Précédent`, `Aujourd’hui`, `Suivant`), `Exporter (.ics)`, `Nouvelle tâche`                                        |
+| Légende visuelle         | Distingue **Samedi & dimanche (week-end)** (fond ambré chaud + bordure supérieure accentuée + badge `Week-end`) et **Créneau 18h–7h (soir et nuit)** (fond ardoise frais + rail latéral + icône lune + badge `18h–7h`) |
+| Grille `Mois`            | Semaines du lundi au dimanche (`Lun` à `Dim`) ; différenciation visuelle des samedis/dimanches (`data-weekend="true"`), badge `Auj.`, bouton `+` par jour                                                              |
+| Grille `Semaine`         | Bandeau jours (`Lun`–`Dim`) + ligne `Sans heure` + `24` créneaux horaires (`00:00` à `23:00`), différenciation `Week-end` et `18h–7h` (`18:00–06:59`, séparateurs à `07:00` et `18:00`), bouton `+` par jour/heure     |
+| Carte de tâche           | Clic pour ouvrir le détail, glisser-déposer vers une autre date ou créneau horaire (`Sans heure` ou `HH:00`), boutons rapides `−1 j` / `+1 j`, raccourcis clavier `Alt`/`Maj` + flèches                                |
+| Panneau `Sans échéance`  | Liste les tâches actives sans `dueDate` du projet sélectionné, avec glisser-déposer vers la grille ou un créneau horaire et bouton `Planifier aujourd’hui`                                                             |
+| Export `Exporter (.ics)` | Génère `locavern-<projet\|echeances>-AAAA-MM-JJ.ics` (`VEVENT` RFC 5545 : `VALUE=DATE` sans heure, `DTSTART`/`DTEND` horodatés sur 1 h avec `dueTime`, tâches archivées exclues)                                       |
 
 ## Vue Notes et éditeur enrichi
 
-- **Filtres** : sélecteur de projet (`Toutes les notes`, `Sans projet`, ou un projet), sélecteur `Étiquette` (`Toutes les étiquettes`, `#<nom>`), champ `Rechercher titre ou contenu` (filtre multi-mots sur titre, contenu et étiquettes). Tri automatique par date de mise à jour décroissante.
-- **Fenêtre de saisie de note (`Nouvelle note` / `Modifier la note`)** : s’affiche en `Tiroir latéral` par défaut ou en `Modale` selon le réglage de l’écran `Notes`. Ouverte par `Nouvelle note`, `Créer une note`, `Ouvrir la saisie` ou `Ctrl+K` → `Créer une note`. Champs : `Titre de la note` (`200` caractères max.), `Projet associé`, `Contenu` (éditeur enrichi). Actions : `Supprimer` (envoi en corbeille avec confirmation), `Annuler`, `Créer la note` / `Enregistrer`.
-- **Espace de travail intégré** : `Titre de la note`, `Projet associé`, éditeur `Étiquettes`, éditeur `Éléments liés` + rétroliens `Lié depuis :`, éditeur Tiptap, barre `Modèles de trame` (`Appliquer`, `Enregistrer comme modèle`, suppression des modèles personnels) et pied de carte (`Ouvrir la saisie`, `Dupliquer` créant `<titre> (copie)`, `Exporter (.md)`, `Supprimer`, `Enregistrer`).
+- **Filtres** : sélecteur de projet (`Toutes les notes`, `Sans projet`, ou un projet actif), sélecteur `Étiquette` (`Toutes les étiquettes`, `#<nom>`), champ `Rechercher titre ou contenu` (filtre multi-mots sur titre, contenu et étiquettes). Les notes archivées (directement ou via leur projet) sont masquées ; tri automatique par date de mise à jour décroissante.
+- **Fenêtre de saisie de note (`Nouvelle note` / `Modifier la note`)** : s’affiche en `Tiroir latéral` par défaut ou en `Modale` selon le réglage de l’écran `Notes`. Ouverte par `Nouvelle note`, `Créer une note`, `Ouvrir la saisie` ou `Ctrl+K` → `Créer une note`. Champs : `Titre de la note` (`200` caractères max.), `Projet associé`, `Contenu` (éditeur enrichi). Actions : `Supprimer`, `Archiver`, `Annuler`, `Créer la note` / `Enregistrer`.
+- **Espace de travail intégré** : `Titre de la note`, `Projet associé`, éditeur `Étiquettes`, éditeur `Éléments liés` + rétroliens `Lié depuis :`, éditeur Tiptap, barre `Modèles de trame` (`Appliquer`, `Enregistrer comme modèle`, suppression des modèles personnels) et pied de carte (`Ouvrir la saisie`, `Dupliquer` créant `<titre> (copie)`, `Exporter (.md)`, `Archiver` `#btn-archive-note`, `Supprimer`, `Enregistrer`).
 - **Barre d’outils de l’éditeur** (partagée avec la description des tâches et le formulaire de saisie) :
 
 | Bouton                             | Action                                                                               |
@@ -174,8 +179,8 @@ La saisie `Nouveau projet` / `Modifier le projet` s’affiche en `Modale` par d�
 
 ## Vue Tableaux blancs et canevas SVG
 
-- **Filtres** : sélecteur de projet (`Tous les tableaux`, `Sans projet`, ou un projet), champ `Rechercher titre ou texte du tableau` (filtre sur le titre et les textes des éléments). Tri automatique par date de mise à jour décroissante.
-- **Fenêtre de saisie (`Nouveau tableau blanc` / `Modifier le tableau blanc`)** : s’affiche en `Modale` par défaut ou en `Tiroir latéral` selon le réglage `Tableaux blancs`. Champs : `Titre du tableau blanc` (`200` caractères max.), `Projet associé`.
+- **Filtres** : sélecteur de projet (`Tous les tableaux`, `Sans projet`, ou un projet actif), champ `Rechercher titre ou texte du tableau` (filtre sur le titre et les textes des éléments). Les tableaux archivés (directement ou via leur projet) sont masqués ; tri automatique par date de mise à jour décroissante.
+- **Fenêtre de saisie (`Nouveau tableau blanc` / `Modifier le tableau blanc`)** : s’affiche en `Modale` par défaut ou en `Tiroir latéral` selon le réglage `Tableaux blancs`. Champs : `Titre du tableau blanc` (`200` caractères max.), `Projet associé`. Actions : `Supprimer`, `Archiver`, `Annuler`, `Créer le tableau blanc` / `Enregistrer`.
 - **Espace de travail intégré** : `Titre du tableau blanc`, `Projet associé`, éditeur `Éléments liés` + rétroliens `Lié depuis :`, barre `Modèles de canevas` (`Appliquer`, `Enregistrer comme modèle`, suppression des modèles personnels) et canevas SVG.
 - **Barre d’outils du canevas (`Outils du tableau blanc`)** :
 
@@ -200,7 +205,19 @@ La saisie `Nouveau projet` / `Modifier le projet` s’affiche en `Modale` par d�
 | `Zoom -`, `100 %`, `Zoom +`, `Ajuster à la vue` | Ajuste le zoom (`25 %` à `300 %`), réinitialise à `100 %` ou cadre le contenu visible                                                                 |
 | `Afficher en taille maximum`                    | Ouvre le canevas et sa barre d’outils en modale occupant toute la zone visible de `#shell-main` (`#dialog-whiteboard-max`)                            |
 
-- **Pied de carte** : indicateur `Enregistré localement` / `Modifications en cours` (délai `200 ms`), boutons `Ouvrir la saisie`, `Exporter SVG`, `Exporter PNG`, `Supprimer` (envoi en corbeille avec confirmation) et `Enregistrer`.
+- **Pied de carte** : indicateur `Enregistré localement` / `Modifications en cours` (délai `200 ms`), boutons `Ouvrir la saisie`, `Exporter SVG`, `Exporter PNG`, `Archiver` (`#btn-archive-whiteboard`), `Supprimer` (envoi en corbeille avec confirmation) et `Enregistrer`.
+
+## Vue Archives
+
+Accessible depuis la barre latérale (`Archives` / `#archives`) ou via `Ctrl+K` → `Aller aux archives`. Regroupe tout élément archivé directement ou rendu archivé par son projet parent (`Projet`, `Tâche`, `Note`, `Tableau blanc`).
+
+| Élément                 | Contrainte / comportement                                                                                                                                                                                                                                                               |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Filtres et tri          | `Recherche` (`#archives-search-input`), `Type` (`Tous les types`, `Projets`, `Tâches`, `Notes`, `Tableaux blancs`), `Projet` (`Tous les projets`, `Sans projet`, projet concerné), `Étiquette`, `Tri` (`Archivé récemment`, `Modifié récemment`, `Titre (A–Z)`), bouton `Réinitialiser` |
+| Liste des archives      | Affiche le badge de type, le badge `Via projet` le cas échéant, le titre, le projet d’origine et la date d’archivage                                                                                                                                                                    |
+| Panneau de détail       | Affiche l’origine d’archivage, les métadonnées (`Projet`, `Archivé le`, `Mis à jour le`, contenu associé / statut + rôle / priorité / échéance / étiquettes), l’aperçu et les liens existants (`#archive-detail-panel`)                                                                 |
+| `Désarchiver`           | Réactive l’élément sélectionné ; pour une tâche, une note ou un tableau blanc rattaché à un projet archivé, réactive automatiquement aussi ce projet parent                                                                                                                             |
+| `Mettre à la corbeille` | Envoie l’élément archivé vers la `Corbeille` locale après confirmation                                                                                                                                                                                                                  |
 
 ## Corbeille locale et Sauvegardes
 
@@ -225,7 +242,8 @@ Commandes statiques de la palette (`Ctrl+K` / `Cmd+K`) :
 | `Aller au calendrier`                | Affiche la vue `Calendrier`                                                                                          |
 | `Aller aux notes`                    | Affiche la vue `Notes`                                                                                               |
 | `Aller aux tableaux blancs`          | Affiche la vue `Tableaux blancs`                                                                                     |
-| `Créer une tâche`                    | Ouvre la saisie `Nouvelle tâche` (ou `Nouveau projet` si aucun projet n’existe) ; ignoré en lecture seule            |
+| `Aller aux archives`                 | Affiche la vue `Archives`                                                                                            |
+| `Créer une tâche`                    | Ouvre la saisie `Nouvelle tâche` (ou `Nouveau projet` si aucun projet actif n’existe) ; ignoré en lecture seule      |
 | `Créer un projet`                    | Ouvre la saisie `Nouveau projet` ; ignoré en lecture seule                                                           |
 | `Créer une note`                     | Ouvre la saisie `Nouvelle note` et affiche la vue `Notes` après création ; ignoré en lecture seule                   |
 | `Créer un tableau blanc`             | Ouvre la saisie `Nouveau tableau blanc` et affiche la vue `Tableaux blancs` après création ; ignoré en lecture seule |
@@ -235,7 +253,7 @@ Commandes statiques de la palette (`Ctrl+K` / `Cmd+K`) :
 | `Ouvrir les préférences d’affichage` | Ouvre la fenêtre `Préférences d’affichage` (`#modal-preferences`)                                                    |
 | `Basculer le thème clair/sombre`     | Inverse le thème actif et enregistre la préférence                                                                   |
 
-La palette indexe également les projets, tâches, notes et tableaux blancs locaux (recherche multi-mots insensible aux accents sur titres, descriptions, checklists, étiquettes et textes du tableau blanc ; jusqu’à `60` résultats affichés).
+La palette indexe les projets, tâches, notes et tableaux blancs actifs (les éléments archivés directement ou via leur projet sont exclus ; recherche multi-mots insensible aux accents sur titres, descriptions, checklists, étiquettes et textes du tableau blanc ; jusqu’à `60` résultats affichés).
 
 Raccourcis clavier globaux et contextuels :
 
