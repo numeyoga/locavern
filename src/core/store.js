@@ -1621,13 +1621,20 @@ export function reduce(state, command) {
       const taskStatuses =
         command.payload.taskStatuses !== undefined
           ? normalizeTaskStatuses(command.payload.taskStatuses)
-          : state.preferences.taskStatuses;
+          : (command.payload.preferences?.taskStatuses ?? state.preferences.taskStatuses);
       const preferences = {
         ...state.preferences,
+        ...command.payload.preferences,
         taskStatuses,
-        selectedProjectId: command.payload.projects[0]?.id ?? null,
-        selectedNoteId: command.payload.notes[0]?.id ?? null,
-        selectedWhiteboardId: command.payload.whiteboards[0]?.id ?? null,
+        selectedProjectId: command.payload.preferences
+          ? command.payload.preferences.selectedProjectId
+          : (command.payload.projects[0]?.id ?? null),
+        selectedNoteId: command.payload.preferences
+          ? command.payload.preferences.selectedNoteId
+          : (command.payload.notes[0]?.id ?? null),
+        selectedWhiteboardId: command.payload.preferences
+          ? command.payload.preferences.selectedWhiteboardId
+          : (command.payload.whiteboards[0]?.id ?? null),
       };
       return {
         nextState: {
@@ -1638,8 +1645,8 @@ export function reduce(state, command) {
           notes: [...command.payload.notes],
           whiteboards: [...command.payload.whiteboards],
           assets: [...command.payload.assets],
-          trash: [],
-          templates: state.templates,
+          trash: [...(command.payload.trash ?? [])],
+          templates: command.payload.templates ? [...command.payload.templates] : state.templates,
           preferences,
         },
         effects: [

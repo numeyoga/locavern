@@ -23,13 +23,25 @@ import {
   selectProjectById,
   selectReferencedAssetIds,
 } from './core/store.js';
-import { validateImageFile } from './adapters/archive-file.js';
-import { initializeExportDirectory } from './adapters/export-directory.js';
+import { buildArchiveZipBlob, validateImageFile } from './adapters/archive-file.js';
+import { buildBackupPayload } from './core/backup.js';
+import { createDirectoryBackup } from './core/directory-backup.js';
+import { MAX_ARCHIVE_BYTES, validateBackupData } from './core/schema.js';
+import {
+  checkDirectoryPermission,
+  getDirectoryBackupInfo,
+  getDirectoryTarget,
+  initializeExportDirectory,
+  recordDirectoryBackup,
+  subscribeExportDirectory,
+  writeDirectoryBackup,
+} from './adapters/export-directory.js';
 import {
   acquireWriteLock,
   applyStoreEffects,
   inspectStorageStatus,
   loadAssetBlob,
+  loadAllAssetBlobs,
   loadHydrationPayload,
   onWriteLockReleased,
   openLocavernDb,
@@ -37,7 +49,7 @@ import {
   waitForWriteLock,
 } from './adapters/storage-idb.js';
 import { setupServiceWorkerUpdates } from './adapters/sw-update.js';
-import { hideAllTooltips, initTooltips } from './adapters/dom/tooltip.js';
+import { hideAllTooltips, initTooltips, setTooltip } from './adapters/dom/tooltip.js';
 import {
   initCovenant,
   notify,
@@ -225,9 +237,9 @@ async function bootstrap() {
     focusTaskId: null,
   };
 
-  /** @type {{ flushAndDestroy: () => void; isDispatchingInline: () => boolean } | null} */
+  /** @type {{ flush: () => void; flushAndDestroy: () => void; isDispatchingInline: () => boolean } | null} */
   let notesViewHandle = null;
-  /** @type {{ flushAndDestroy: () => void; isDispatchingInline: () => boolean } | null} */
+  /** @type {{ flush: () => void; flushAndDestroy: () => void; isDispatchingInline: () => boolean } | null} */
   let whiteboardViewHandle = null;
 
   function flushActiveViewHandles() {
@@ -504,6 +516,8 @@ async function bootstrap() {
     cancelLockWait();
     cancelLockWait = () => {};
     const fresh = await loadHydrationPayload(db);
+    await initializeExportDirectory(db);
+    directoryBackup.directoryChanged(getDirectoryBackupInfo().lastSavedAt);
     store.dispatch({
       type: 'hydrate',
       payload: { ...fresh, readOnly: false },
@@ -545,6 +559,80 @@ async function bootstrap() {
   let persistChain = Promise.resolve();
   let pendingWrites = 0;
 
+  const directoryBackup = createDirectoryBackup({
+    getTarget: getDirectoryTarget,
+    canWrite: () => !store.getState().readOnly,
+    checkPermission: checkDirectoryPermission,
+    async buildSnapshot() {
+      notesViewHandle?.flush();
+      whiteboardViewHandle?.flush();
+      await persistChain;
+      const { manifest, data } = buildBackupPayload(store.getState(), {
+        now: new Date().toISOString(),
+        appVersion: APP_VERSION,
+      });
+      const checked = validateBackupData(data);
+      if (!checked.ok) throw new Error(checked.error);
+      const assetBlobs = await loadAllAssetBlobs(db);
+      const blob = await buildArchiveZipBlob({ manifest, data, assetBlobs });
+      if (blob.size > MAX_ARCHIVE_BYTES)
+        throw new Error('La sauvegarde dépasse la limite de restauration de 25 Mio.');
+      return blob;
+    },
+    write: writeDirectoryBackup,
+    recordSuccess: recordDirectoryBackup,
+  });
+  const stopDirectoryListener = subscribeExportDirectory(() => directoryBackup.directoryChanged());
+  const topbarBackupBtn = /** @type {HTMLButtonElement | null} */ (
+    document.getElementById('topbar-backup-btn')
+  );
+  const topbarBackupStatus = document.getElementById('topbar-backup-status');
+  function updateDirectoryBackupUi() {
+    const { name } = getDirectoryBackupInfo();
+    const state = directoryBackup.getState();
+    const messages = {
+      disconnected: 'Aucun dossier connecté',
+      pending: 'Modifications à sauvegarder',
+      saving: 'Sauvegarde en cours',
+      saved: 'Sauvegardé dans le dossier',
+      suspended: 'Accès au dossier à réautoriser',
+      error: 'Échec de la sauvegarde',
+      readonly: 'Sauvegarde gérée par l’onglet actif',
+    };
+    if (topbarBackupStatus) {
+      topbarBackupStatus.textContent = name ? messages[state.status] : '';
+      topbarBackupStatus.hidden = !name;
+    }
+    if (!topbarBackupBtn) return;
+    const label = name
+      ? `Sauvegarder maintenant — ${messages[state.status]}`
+      : 'Sauvegardes et import/export';
+    topbarBackupBtn.removeAttribute('data-cv-open');
+    topbarBackupBtn.setAttribute('aria-label', label);
+    topbarBackupBtn.disabled =
+      Boolean(name) && (state.status === 'saving' || store.getState().readOnly);
+    setTooltip(topbarBackupBtn, label);
+    const icon = topbarBackupBtn.querySelector('i');
+    if (icon) icon.className = `ph ${name ? 'ph-floppy-disk' : 'ph-export'} cv-icon`;
+  }
+  directoryBackup.subscribe(updateDirectoryBackupUi);
+  directoryBackup.directoryChanged(getDirectoryBackupInfo().lastSavedAt);
+  topbarBackupBtn?.addEventListener('click', async () => {
+    if (!getDirectoryTarget()) {
+      openDialogById('modal-backup');
+      return;
+    }
+    const saved = await directoryBackup.saveNow();
+    const state = directoryBackup.getState();
+    notify({
+      status: saved ? 'success' : 'warning',
+      title: saved ? 'Sauvegarde enregistrée' : 'Sauvegarde suspendue ou en échec',
+      text: saved
+        ? 'Vos données ont été copiées dans le dossier connecté.'
+        : state.error || 'Autorisez l’accès au dossier pour reprendre la sauvegarde.',
+    });
+  });
+
   store.subscribe(({ state, prevState, command, effects }) => {
     setToastDurationSeconds(state.preferences.toastDurationSeconds);
 
@@ -567,7 +655,11 @@ async function bootstrap() {
             delete document.documentElement.dataset.persisting;
           }
         });
+      directoryBackup.markChanged();
     }
+    if (command.type === 'set_read_only' || command.type === 'hydrate')
+      directoryBackup.markChanged();
+    updateDirectoryBackupUi();
 
     if (command.type === 'delete_project' || command.type === 'trash_project') {
       if (notesFilters.projectId === command.id) {
@@ -824,8 +916,10 @@ async function bootstrap() {
     db,
     store,
     appVersion: APP_VERSION,
-    onBeforeReplace() {
+    directoryBackup,
+    async onBeforeReplace() {
       flushActiveViewHandles();
+      await persistChain;
       revokeAllAssetUrls();
     },
   });
@@ -838,6 +932,8 @@ async function bootstrap() {
   let cleanupSwUpdates = () => {};
 
   window.addEventListener('beforeunload', () => {
+    directoryBackup.dispose();
+    stopDirectoryListener();
     cleanupSwUpdates();
     flushActiveViewHandles();
     cancelLockWait();

@@ -9,7 +9,6 @@ import {
 } from '../core/crypto-archive.js';
 import { ALLOWED_IMAGE_MIMES } from '../core/model.js';
 import { MAX_ARCHIVE_BYTES, MAX_ASSET_BYTES } from '../core/schema.js';
-import { saveBlobToExportDirectory } from './export-directory.js';
 
 /**
  * Create a ZIP archive Blob containing manifest.json, data.json and assets/*.
@@ -29,8 +28,14 @@ export async function buildArchiveZipBlob({ manifest, data, assetBlobs, password
     'data.json': strToU8(JSON.stringify(data, null, 2)),
   };
 
+  let binaryBytes = 0;
   for (const meta of data.assets) {
     const blob = assetBlobs.get(meta.id);
+    if (!blob)
+      throw new Error(`Image locale manquante : ${meta.filename}. Sauvegarde interrompue.`);
+    binaryBytes += blob.size;
+    if (blob.size > MAX_ASSET_BYTES || binaryBytes > MAX_ARCHIVE_BYTES)
+      throw new Error('Les images dépassent la limite de restauration de l’archive.');
     if (blob) {
       const buf = await blob.arrayBuffer();
       files[`assets/${meta.id}`] = new Uint8Array(buf);
@@ -121,12 +126,9 @@ function resolveWindowSavePicker() {
  *   fallbackDownload?: (blob: Blob, filename: string) => void;
  *   pickerTypes?: Array<{ description: string; accept: Record<string, string[]> }>;
  * }} [deps]
- * @returns {Promise<{ saved: true; method: 'directory' | 'picker' | 'download' } | { saved: false; cancelled: true }>}
+ * @returns {Promise<{ saved: true; method: 'picker' | 'download' } | { saved: false; cancelled: true }>}
  */
 export async function saveArchiveBlob(blob, filename, deps = {}) {
-  if (await saveBlobToExportDirectory(blob, filename)) {
-    return { saved: true, method: 'directory' };
-  }
   const picker = deps.showSaveFilePicker ?? resolveWindowSavePicker();
   const downloadFn = deps.fallbackDownload ?? triggerArchiveDownload;
   const types = deps.pickerTypes ?? [

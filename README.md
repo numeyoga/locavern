@@ -1,7 +1,7 @@
 ---
 version: '0.2.0'
 cree_le: 2026-11-13
-mis_a_jour_le: 2026-11-15
+mis_a_jour_le: 2026-11-16
 ---
 
 # Locavern
@@ -21,7 +21,7 @@ Locavern est une application web local-first de productivité personnelle (table
 - **Transversalité et recherche** : étiquettes multi-entités sur tâches et notes, liens internes bidirectionnels (`Éléments liés` / `Lié depuis :`) entre tâches, notes et tableaux blancs, modèles locaux intégrés et personnalisés (checklists, notes, tableaux blancs) et palette dynamique `Ctrl+K`.
 - **Notes enrichies** : éditeur Tiptap Core headless (`Titre 1` à `3`, gras, italique, barré, code, listes à cocher, liens `https://` et `mailto:`), duplication, export Markdown (`.md`) et images locales stockées en `Blob` dans `IndexedDB` (blocage des images distantes).
 - **Tableau blanc SVG** : canevas SVG natif avec sélection par zone, multi-sélection (`Maj+clic`, `Maj+Espace`, `Ctrl+A`), duplication (`Ctrl+D`), aimantation des flèches aux ancres des formes, grille `20 px` avec magnétisme, Post-it, rectangles, ellipses, flèches, texte, tracés libres et images locales, 5 couleurs sémantiques Covenant, historique Annuler/Rétablir, zoom / ajustement à la vue, manipulation complète au clavier (WCAG 2.2 AA) et export autonome `.svg` et `.png`.
-- **Corbeille, stockage et portabilité** : persistance `IndexedDB` (`idb`, `DB_VERSION = 4`), corbeille locale à rétention configurable (`1` à `365` jours) avec purge des images orphelines, protection multi-onglets par Web Locks (`navigator.locks`), export/import d’archives ZIP en clair ou chiffrées (`AES-256-GCM` + `PBKDF2-SHA-256`), fusion sans écrasement ou import sélectif par projets, enregistrement via `showSaveFilePicker`, mode hors ligne PWA avec bandeau de mise à jour Service Worker et CSP stricte sans CDN.
+- **Corbeille, stockage et portabilité** : persistance `IndexedDB` (`idb`, `DB_VERSION = 4`), corbeille locale à rétention configurable (`1` à `365` jours) avec purge des images orphelines, protection multi-onglets par Web Locks (`navigator.locks`), export/import d’archives ZIP en clair ou chiffrées (`AES-256-GCM` + `PBKDF2-SHA-256`), fusion sans écrasement ou import sélectif par projets, sauvegarde automatique complète dans un dossier connecté (`locavern-sauvegarde.zip`, copie initiale puis après trois secondes sans modification), bouton de sauvegarde immédiate, exports ponctuels via `showSaveFilePicker`, mode hors ligne PWA avec bandeau de mise à jour Service Worker et CSP stricte sans CDN.
 
 ## Démarrage et scripts
 
