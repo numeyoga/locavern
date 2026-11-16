@@ -5,7 +5,8 @@ import { selectProjectById, selectTemplates, selectWhiteboards } from '../../cor
 import { instantiateWhiteboardTemplate } from '../../core/templates.js';
 import { createTemplatePicker } from './template-picker.js';
 import { initTooltips } from './tooltip.js';
-import { triggerArchiveDownload } from '../archive-file.js';
+import { saveArchiveBlob } from '../archive-file.js';
+import { ensureExportDirectoryPermission } from '../export-directory.js';
 import { mountWhiteboardCanvas } from '../whiteboard-canvas.js';
 import { closeDialogById, confirmAction, notify, openDialogById } from './app-shell.js';
 import { createLinkEditor } from './link-editor.js';
@@ -583,9 +584,13 @@ export function renderWhiteboardView({
       exportSvgBtn.addEventListener('click', async () => {
         if (!canvasHandle) return;
         try {
+          await ensureExportDirectoryPermission();
           const blob = await canvasHandle.exportSvgBlob();
           const stem = toSafeFileStem(titleInput.value.trim() || currentWb.title);
-          triggerArchiveDownload(blob, `${stem}.svg`);
+          const result = await saveArchiveBlob(blob, `${stem}.svg`, {
+            pickerTypes: [{ description: 'Image SVG', accept: { 'image/svg+xml': ['.svg'] } }],
+          });
+          if (!result.saved) return;
           notify({ status: 'success', title: 'Export SVG prêt', text: `${stem}.svg` });
         } catch {
           notify({
@@ -604,9 +609,13 @@ export function renderWhiteboardView({
       exportPngBtn.addEventListener('click', async () => {
         if (!canvasHandle) return;
         try {
+          await ensureExportDirectoryPermission();
           const blob = await canvasHandle.exportPngBlob();
           const stem = toSafeFileStem(titleInput.value.trim() || currentWb.title);
-          triggerArchiveDownload(blob, `${stem}.png`);
+          const result = await saveArchiveBlob(blob, `${stem}.png`, {
+            pickerTypes: [{ description: 'Image PNG', accept: { 'image/png': ['.png'] } }],
+          });
+          if (!result.saved) return;
           notify({ status: 'success', title: 'Export PNG prêt', text: `${stem}.png` });
         } catch {
           notify({

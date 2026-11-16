@@ -3,6 +3,13 @@
 import { buildBackupPayload, formatBackupAgeLabel, prepareBackupMerge } from '../../core/backup.js';
 import { buildArchiveZipBlob, parseArchiveFile, saveArchiveBlob } from '../archive-file.js';
 import {
+  chooseExportDirectory,
+  ensureExportDirectoryPermission,
+  forgetExportDirectory,
+  getExportDirectoryName,
+  supportsExportDirectory,
+} from '../export-directory.js';
+import {
   getLastBackupAt,
   inspectStorageStatus,
   loadAllAssetBlobs,
@@ -231,6 +238,76 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
       }
     });
 
+    const directorySection = document.createElement('section');
+    directorySection.className = 'lc-backup-section';
+    const directoryTitle = document.createElement('h3');
+    directoryTitle.className = 'cv-h4';
+    directoryTitle.textContent = 'Dossier des exports';
+    const directoryStatus = document.createElement('p');
+    directoryStatus.className = 'cv-caption';
+    directoryStatus.id = 'export-directory-status';
+    directoryStatus.setAttribute('role', 'status');
+    const directoryHint = document.createElement('p');
+    directoryHint.className = 'cv-caption';
+    directoryHint.textContent =
+      'Les archives ZIP, notes Markdown, calendriers et images seront enregistrés dans ce dossier. Un fichier du même nom sera remplacé.';
+    const chooseDirectoryBtn = document.createElement('button');
+    chooseDirectoryBtn.type = 'button';
+    chooseDirectoryBtn.className = 'cv-btn cv-btn--sm';
+    chooseDirectoryBtn.id = 'btn-choose-export-directory';
+    const forgetDirectoryBtn = document.createElement('button');
+    forgetDirectoryBtn.type = 'button';
+    forgetDirectoryBtn.className = 'cv-btn cv-btn--sm';
+    forgetDirectoryBtn.id = 'btn-forget-export-directory';
+    forgetDirectoryBtn.textContent = 'Retirer le dossier';
+    function updateDirectoryUi() {
+      const name = getExportDirectoryName();
+      directoryStatus.textContent = name
+        ? `Dossier choisi : ${name}`
+        : 'Aucun dossier choisi : sélecteur de fichier ou téléchargement classique.';
+      chooseDirectoryBtn.textContent = name ? 'Changer de dossier' : 'Choisir un dossier';
+      forgetDirectoryBtn.hidden = !name;
+    }
+    updateDirectoryUi();
+    chooseDirectoryBtn.addEventListener('click', async () => {
+      chooseDirectoryBtn.disabled = true;
+      try {
+        const result = await chooseExportDirectory();
+        updateDirectoryUi();
+        if (!result.remembered)
+          directoryStatus.textContent += ' (Choix valable pour cette session uniquement.)';
+      } catch (error) {
+        if (!(error instanceof Error && error.name === 'AbortError')) {
+          notify({
+            status: 'danger',
+            title: 'Dossier indisponible',
+            text: 'Impossible de sélectionner ce dossier. Réessayez.',
+          });
+        }
+      } finally {
+        chooseDirectoryBtn.disabled = false;
+      }
+    });
+    forgetDirectoryBtn.addEventListener('click', async () => {
+      try {
+        await forgetExportDirectory();
+        updateDirectoryUi();
+      } catch {
+        notify({
+          status: 'danger',
+          title: 'Impossible de retirer le dossier',
+          text: 'Réessayez. Les fichiers sur le disque sont conservés.',
+        });
+      }
+    });
+    directorySection.append(directoryTitle, directoryStatus);
+    if (supportsExportDirectory()) {
+      directorySection.append(directoryHint, chooseDirectoryBtn, forgetDirectoryBtn);
+    } else {
+      directoryStatus.textContent =
+        'Ce navigateur ne permet pas de choisir un dossier pour les exports. Le téléchargement classique reste disponible.';
+    }
+
     // Export section
     const exportSection = document.createElement('section');
     exportSection.className = 'lc-backup-section';
@@ -360,6 +437,7 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
 
       exportBtn.disabled = true;
       try {
+        await ensureExportDirectoryPermission();
         const current = store.getState();
         const now = new Date().toISOString();
         const { manifest, data } = buildBackupPayload(current, { now, appVersion });
@@ -384,11 +462,14 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
           title: useEncryption ? 'Archive chiffrée exportée' : 'Archive exportée',
           text: `${current.projects.length} projets, ${current.tasks.length} tâches, ${current.notes.length} notes et ${current.whiteboards.length} tableaux blancs inclus.`,
         });
-      } catch {
+      } catch (error) {
         notify({
           status: 'danger',
           title: 'Échec de l’export',
-          text: 'Impossible de générer l’archive ZIP depuis IndexedDB. Réessayez.',
+          text:
+            error instanceof Error
+              ? error.message
+              : 'Impossible d’enregistrer l’archive ZIP. Réessayez.',
         });
       } finally {
         exportBtn.disabled = false;
@@ -852,7 +933,13 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
     });
     resetSection.append(resetTitle, resetBtn);
 
-    modalBody.replaceChildren(statsSection, exportSection, importSection, resetSection);
+    modalBody.replaceChildren(
+      statsSection,
+      directorySection,
+      exportSection,
+      importSection,
+      resetSection,
+    );
     initTooltips(modalBody);
   }
 

@@ -24,6 +24,7 @@ import {
   selectReferencedAssetIds,
 } from './core/store.js';
 import { validateImageFile } from './adapters/archive-file.js';
+import { initializeExportDirectory } from './adapters/export-directory.js';
 import {
   acquireWriteLock,
   applyStoreEffects,
@@ -71,6 +72,7 @@ async function bootstrap() {
   const rootView = viewContainer;
 
   const db = await openLocavernDb();
+  await initializeExportDirectory(db);
   let lockHandle = await acquireWriteLock();
   const payload = await loadHydrationPayload(db);
   await inspectStorageStatus({ requestPersist: lockHandle.acquired });
