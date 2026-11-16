@@ -9,6 +9,7 @@ import {
 } from '../core/crypto-archive.js';
 import { ALLOWED_IMAGE_MIMES } from '../core/model.js';
 import { MAX_ARCHIVE_BYTES, MAX_ASSET_BYTES } from '../core/schema.js';
+import { saveBlobToExportDirectory } from './export-directory.js';
 
 /**
  * Create a ZIP archive Blob containing manifest.json, data.json and assets/*.
@@ -120,9 +121,12 @@ function resolveWindowSavePicker() {
  *   fallbackDownload?: (blob: Blob, filename: string) => void;
  *   pickerTypes?: Array<{ description: string; accept: Record<string, string[]> }>;
  * }} [deps]
- * @returns {Promise<{ saved: true; method: 'picker' | 'download' } | { saved: false; cancelled: true }>}
+ * @returns {Promise<{ saved: true; method: 'directory' | 'picker' | 'download' } | { saved: false; cancelled: true }>}
  */
 export async function saveArchiveBlob(blob, filename, deps = {}) {
+  if (await saveBlobToExportDirectory(blob, filename)) {
+    return { saved: true, method: 'directory' };
+  }
   const picker = deps.showSaveFilePicker ?? resolveWindowSavePicker();
   const downloadFn = deps.fallbackDownload ?? triggerArchiveDownload;
   const types = deps.pickerTypes ?? [

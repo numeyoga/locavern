@@ -1,7 +1,7 @@
 ---
 version: '0.2.0'
 cree_le: 2026-11-13
-mis_a_jour_le: 2026-11-15
+mis_a_jour_le: 2026-11-16
 ---
 
 # Comment sauvegarder, restaurer ou effacer vos données
@@ -13,6 +13,7 @@ Pour les détails techniques du format ZIP, de la portée exacte des archives et
 ## Sommaire
 
 - [Vérifier l’état du stockage et demander la persistance](#vérifier-létat-du-stockage-et-demander-la-persistance)
+- [Choisir un dossier pour les exports](#choisir-un-dossier-pour-les-exports)
 - [Exporter une archive ZIP (en clair ou chiffrée)](#exporter-une-archive-zip-en-clair-ou-chiffrée)
 - [Importer, fusionner ou restaurer une archive ZIP](#importer-fusionner-ou-restaurer-une-archive-zip)
 - [Récupérer ou purger depuis la corbeille locale](#récupérer-ou-purger-depuis-la-corbeille-locale)
@@ -27,12 +28,22 @@ La section **État du stockage local** indique le nombre de projets, tâches, no
 - Si le badge indique **Stockage persistant**, le navigateur protège la base contre l’effacement automatique en cas de manque d’espace disque.
 - Si le badge indique **Stockage standard**, cliquez sur **Demander la persistance au navigateur** (bouton visible hors mode lecture seule). Si le navigateur refuse l’élévation, exportez régulièrement des archives ZIP pour sécuriser vos données.
 
+## Choisir un dossier pour les exports
+
+1. Ouvrez **Sauvegardes et stockage**.
+2. Dans **Dossier des exports**, cliquez sur **Choisir un dossier** et autorisez l’accès en écriture dans le sélecteur du navigateur.
+3. Vos prochains exports ZIP, Markdown, iCalendar, SVG et PNG seront enregistrés directement dans ce dossier. Un fichier du même nom sera remplacé.
+
+Locavern mémorise le dossier sur cet appareil lorsque le navigateur le permet. Sinon, un message indique que le choix vaut uniquement pour la session. Après réouverture, le navigateur peut redemander l’autorisation lors du prochain export. En cas de refus d’accès, l’export signale une erreur ; vous pouvez réautoriser l’accès ou retirer le dossier.
+
+Utilisez **Changer de dossier** pour sélectionner un autre emplacement, ou **Retirer le dossier** pour revenir au sélecteur de fichier ou au téléchargement classique. Retirer le dossier ne supprime aucun fichier sur le disque. Les navigateurs sans prise en charge de cette fonction conservent le téléchargement classique.
+
 ## Exporter une archive ZIP (en clair ou chiffrée)
 
 1. Ouvrez **Sauvegardes et stockage** (`Sauvegarder`).
 2. Par défaut, l’archive est générée en clair. Pour protéger son contenu par mot de passe, cochez **Protéger l’archive par un mot de passe (AES-GCM)**, puis saisissez et confirmez le mot de passe dans **Mot de passe de chiffrement** et **Confirmer le mot de passe** (bouton œil pour vérifier la saisie).
 3. Cliquez sur **Exporter l’archive ZIP**.
-4. Choisissez l’emplacement du fichier `locavern-sauvegarde-AAAA-MM-JJ.zip` dans le sélecteur de fichier natif (ou laissez le téléchargement standard du navigateur s’effectuer). Si vous annulez le sélecteur natif, aucun fichier n’est écrit et la date **Dernière sauvegarde ZIP** n’est pas modifiée.
+4. Si un dossier d’export est choisi, le fichier `locavern-sauvegarde-AAAA-MM-JJ.zip` y est enregistré directement. Sinon, choisissez son emplacement dans le sélecteur de fichier natif (ou laissez le téléchargement standard du navigateur s’effectuer). Si vous annulez le sélecteur natif, aucun fichier n’est écrit et la date **Dernière sauvegarde ZIP** n’est pas modifiée.
 
 L’archive inclut vos projets, tâches (y compris récurrence, checklists et descriptions), notes, tableaux blancs, statuts Kanban personnalisés et images locales au format binaire d’origine. Note : les étiquettes (`tags`), liens internes (`links`), éléments présents dans la corbeille et modèles personnalisés restent uniquement dans `IndexedDB` sur cet appareil (voir [Stockage local, format d’archive et messages d’erreur](../reference/stockage-limites-et-erreurs.md#portée-des-archives-et-limites-techniques)).
 
