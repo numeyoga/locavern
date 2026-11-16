@@ -1,10 +1,15 @@
-const CACHE_NAME = 'locavern-shell-v2';
+const CACHE_NAME = 'locavern-shell-v3';
 
 const CORE_ASSETS = [
   './',
   './index.html',
   './manifest.webmanifest',
   './theme-init.js',
+  './favicon.svg',
+  './favicon.ico',
+  './apple-touch-icon.png',
+  './icon-192.png',
+  './icon-512.png',
   './vendor/covenant/covenant-tokens.css',
   './vendor/covenant/covenant.css',
   './vendor/covenant/covenant.js',
