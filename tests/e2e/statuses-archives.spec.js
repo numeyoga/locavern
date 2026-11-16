@@ -202,4 +202,115 @@ test.describe('Statuts initiaux/terminaux, garde de liens et archivage complet',
       .click();
     await expect(page.locator('#nav-trash-count')).toHaveText('1');
   });
+
+  test('les tuiles de la liste Archives ne se compriment pas ni ne chevauchent leur texte quand la liste déborde', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto('/');
+
+    // Créer un projet et 8 éléments variés (note, tableau blanc, tâches à titres longs)
+    await page.getByRole('button', { name: 'Créer un projet' }).click();
+    await page.locator('#project-name-input').fill('Locavern');
+    await page.locator('#modal-project button[type="submit"]').click();
+
+    await page.locator('[data-nav-view="notes"]').click();
+    await page.getByRole('button', { name: 'Créer une note' }).click();
+    await page.locator('#note-dialog-title-input').fill('Nouvelle note');
+    await page.locator('#note-dialog-project-select').selectOption({ label: 'Locavern' });
+    await page.locator('#dialog-note button[type="submit"]').click();
+
+    await page.locator('[data-nav-view="whiteboards"]').click();
+    await page.getByRole('button', { name: 'Créer un tableau blanc' }).click();
+    await page.locator('#whiteboard-dialog-title-input').fill('Nouveau tableau blanc');
+    await page.locator('#whiteboard-dialog-project-select').selectOption({ label: 'Locavern' });
+    await page.locator('#dialog-whiteboard button[type="submit"]').click();
+
+    await page.locator('[data-nav-view="tasks"]').click();
+    const taskTitles = [
+      'Mieux profiter de la largeur de l’écran',
+      'Implémenter tableau blanc',
+      'Sauvegarder et charger un dessin',
+      'Ajouter bouton ouvrir les notes',
+      'Les toasts doivent se fermer automatiquement',
+      'Pouvoir choisir le type d’éditeur pour les tâches',
+    ];
+    for (const title of taskTitles) {
+      await page.locator('#btn-new-task').click();
+      await page.locator('#task-title-input').fill(title);
+      await page.locator('#task-project-select').selectOption({ label: 'Locavern' });
+      await page.locator('#drawer-task button[type="submit"]').click();
+    }
+
+    // Archiver le projet (archive ainsi les 9 éléments)
+    await page.locator('[data-nav-view="projects"]').click();
+    await page.getByRole('button', { name: 'Archiver Locavern' }).click();
+
+    await page.locator('[data-nav-view="archives"]').click();
+    await expect(page.locator('[data-archive-entry]')).toHaveCount(9);
+
+    const metrics = await page.evaluate(() => {
+      const list = document.querySelector('.lc-archives-list');
+      if (!list) throw new Error('Missing .lc-archives-list');
+      const items = [...list.querySelectorAll('.lc-archive-item')];
+      const listRect = list.getBoundingClientRect();
+      const itemStats = items.map((item) => {
+        const rect = item.getBoundingClientRect();
+        const children = [...item.children].map((child) => {
+          const cRect = child.getBoundingClientRect();
+          return {
+            className: child.className,
+            top: cRect.top,
+            bottom: cRect.bottom,
+            left: cRect.left,
+            right: cRect.right,
+          };
+        });
+        return {
+          text: item.textContent?.trim() ?? '',
+          top: rect.top,
+          bottom: rect.bottom,
+          height: rect.height,
+          clientHeight: item.clientHeight,
+          scrollHeight: item.scrollHeight,
+          children,
+        };
+      });
+      return {
+        listClientHeight: list.clientHeight,
+        listScrollHeight: list.scrollHeight,
+        listTop: listRect.top,
+        listBottom: listRect.bottom,
+        itemStats,
+      };
+    });
+
+    // La liste doit défiler verticalement au lieu d'écraser ses tuiles
+    expect(metrics.listScrollHeight).toBeGreaterThan(metrics.listClientHeight);
+
+    /** @type {(typeof metrics.itemStats)[number] | null} */
+    let prev = null;
+    for (const [i, item] of metrics.itemStats.entries()) {
+      // Aucun débordement interne du texte hors de sa tuile
+      expect(item.scrollHeight, `Tuile #${i} (${item.text}) déborde`).toBeLessThanOrEqual(
+        item.clientHeight + 1,
+      );
+      for (const child of item.children) {
+        expect(
+          child.top,
+          `Enfant ${child.className} de la tuile #${i} dépasse en haut`,
+        ).toBeGreaterThanOrEqual(item.top - 0.5);
+        expect(
+          child.bottom,
+          `Enfant ${child.className} de la tuile #${i} dépasse en bas`,
+        ).toBeLessThanOrEqual(item.bottom + 0.5);
+      }
+      if (prev) {
+        expect(item.top, `Tuile #${i} chevauche la tuile #${i - 1}`).toBeGreaterThanOrEqual(
+          prev.bottom - 0.5,
+        );
+      }
+      prev = item;
+    }
+  });
 });
