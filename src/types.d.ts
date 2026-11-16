@@ -231,6 +231,9 @@ export interface BackupData {
   readonly whiteboards: readonly Whiteboard[];
   readonly assets: readonly AssetMeta[];
   readonly taskStatuses?: readonly TaskStatusConfig[];
+  readonly preferences?: AppPreferences;
+  readonly templates?: readonly LocalTemplate[];
+  readonly trash?: readonly TrashItem[];
 }
 
 export interface BackupManifest {
@@ -434,6 +437,9 @@ export type AppCommand =
         readonly whiteboards: readonly Whiteboard[];
         readonly assets: readonly AssetMeta[];
         readonly taskStatuses?: readonly TaskStatusConfig[];
+        readonly preferences?: AppPreferences;
+        readonly templates?: readonly LocalTemplate[];
+        readonly trash?: readonly TrashItem[];
       };
     }
   | {
@@ -482,6 +488,9 @@ export type StoreEffect =
         readonly whiteboards: readonly Whiteboard[];
         readonly assets: readonly AssetMeta[];
         readonly taskStatuses?: readonly TaskStatusConfig[];
+        readonly preferences?: AppPreferences;
+        readonly templates?: readonly LocalTemplate[];
+        readonly trash?: readonly TrashItem[];
       };
     }
   | {

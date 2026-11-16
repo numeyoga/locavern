@@ -1,14 +1,21 @@
 /**
  * @typedef {FileSystemDirectoryHandle & {
  *   requestPermission: (options: { mode: 'readwrite' }) => Promise<PermissionState>;
+ *   queryPermission: (options: { mode: 'readwrite' }) => Promise<PermissionState>;
  * }} ExportDirectoryHandle
  */
 
 const META_KEY = 'exportDirectory';
+export const DIRECTORY_BACKUP_FILENAME = 'locavern-sauvegarde.zip';
 /** @type {ExportDirectoryHandle | null} */
 let directory = null;
 /** @type {import('idb').IDBPDatabase | null} */
 let database = null;
+let remembered = true;
+/** @type {string | null} */
+let lastSavedAt = null;
+/** @type {Set<() => void>} */
+const listeners = new Set();
 
 export function supportsExportDirectory() {
   return (
@@ -19,26 +26,43 @@ export function supportsExportDirectory() {
   );
 }
 
-/** Restore the handle without prompting for disk access at startup.
- * @param {import('idb').IDBPDatabase} db
- */
+/** @param {import('idb').IDBPDatabase} db */
 export async function initializeExportDirectory(db) {
   database = db;
   directory = null;
+  lastSavedAt = null;
+  remembered = true;
   if (!supportsExportDirectory()) return;
   try {
     const row = await db.get('meta', META_KEY);
-    if (row?.value?.kind === 'directory') directory = row.value;
+    if (row?.value?.kind === 'directory') {
+      directory = row.value;
+      lastSavedAt = typeof row.lastSavedAt === 'string' ? row.lastSavedAt : null;
+    }
   } catch {
-    // A storage policy must not prevent the rest of the application from opening.
+    /* The app remains usable when directory persistence is unavailable. */
   }
 }
 
 export function getExportDirectoryName() {
   return directory?.name ?? null;
 }
+export function getDirectoryTarget() {
+  return directory;
+}
+export function getDirectoryBackupInfo() {
+  return { name: getExportDirectoryName(), lastSavedAt, remembered };
+}
 
-/** Must be invoked directly from a user gesture. */
+/** @param {() => void} listener */
+export function subscribeExportDirectory(listener) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+/** Invoked directly from a click. Selecting a folder enables automatic backups. */
 export async function chooseExportDirectory() {
   if (!supportsExportDirectory())
     throw new Error('La sauvegarde dans un dossier est indisponible.');
@@ -48,52 +72,42 @@ export async function chooseExportDirectory() {
     );
   const selected = await picker.showDirectoryPicker({ id: 'locavern-exports', mode: 'readwrite' });
   directory = selected;
+  lastSavedAt = null;
+  remembered = false;
   try {
-    if (!database) throw new Error('Stockage indisponible');
-    await database.put('meta', { key: META_KEY, value: selected });
-    return { remembered: true };
+    if (database) {
+      await database.put('meta', { key: META_KEY, value: selected, lastSavedAt: null });
+      remembered = true;
+    }
   } catch {
-    return { remembered: false };
+    /* Keep the chosen folder available for this session. */
   }
+  for (const listener of listeners) listener();
+  return { remembered };
 }
 
 export async function forgetExportDirectory() {
-  // Clear persisted access before reporting that the choice has been forgotten.
   if (database) await database.delete('meta', META_KEY);
   directory = null;
+  lastSavedAt = null;
+  for (const listener of listeners) listener();
 }
 
-/** Call before asynchronous export generation, while user activation is available. */
-export async function ensureExportDirectoryPermission() {
-  const selected = directory;
-  if (!selected) return;
-  const permission = await selected.requestPermission({ mode: 'readwrite' });
-  if (permission !== 'granted') {
-    throw new DOMException(
-      'Autorisez l’accès au dossier ou retirez ce dossier dans Sauvegardes.',
-      'NotAllowedError',
-    );
-  }
-}
-
-/** @param {Blob} blob
- * @param {string} filename
- * @returns {Promise<boolean>} false when no directory is configured.
+/** Background backups only query access; prompting requires an explicit click.
+ * @param {ExportDirectoryHandle} target
+ * @param {boolean} interactive
  */
-export async function saveBlobToExportDirectory(blob, filename) {
-  const selected = directory;
-  if (!selected) return false;
-  if (
-    !filename.trim() ||
-    filename === '.' ||
-    filename === '..' ||
-    /[\\/]/u.test(filename) ||
-    Array.from(filename).some((character) => character.charCodeAt(0) < 32)
-  ) {
-    throw new TypeError('Nom de fichier invalide.');
-  }
-  await ensureExportDirectoryPermission();
-  const handle = await selected.getFileHandle(filename, { create: true });
+export function checkDirectoryPermission(target, interactive) {
+  return interactive
+    ? target.requestPermission({ mode: 'readwrite' })
+    : target.queryPermission({ mode: 'readwrite' });
+}
+
+/** @param {ExportDirectoryHandle} target
+ * @param {Blob} blob
+ */
+export async function writeDirectoryBackup(target, blob) {
+  const handle = await target.getFileHandle(DIRECTORY_BACKUP_FILENAME, { create: true });
   const writable = await handle.createWritable();
   try {
     await writable.write(blob);
@@ -102,9 +116,23 @@ export async function saveBlobToExportDirectory(blob, filename) {
     try {
       await writable.abort();
     } catch {
-      /* Preserve the original write error. */
+      /* Preserve the write error. */
     }
     throw error;
   }
-  return true;
+}
+
+/** @param {ExportDirectoryHandle} target
+ * @param {string} timestamp
+ */
+export async function recordDirectoryBackup(target, timestamp) {
+  if (target !== directory) return;
+  lastSavedAt = timestamp;
+  if (database && remembered) {
+    try {
+      await database.put('meta', { key: META_KEY, value: target, lastSavedAt: timestamp });
+    } catch {
+      /* The disk write succeeded; keep its timestamp for this session. */
+    }
+  }
 }

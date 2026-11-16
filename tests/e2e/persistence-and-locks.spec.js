@@ -176,7 +176,7 @@ test.describe('Persistance IndexedDB, Web Locks multi-onglets et sauvegarde ZIP 
     await expect(page.locator('#stat-last-backup-age')).toHaveText('À l’instant');
     const saves = await page.evaluate(() => /** @type {any} */ (window).__pickerSaves);
     expect(saves).toHaveLength(1);
-    expect(saves[0].name).toMatch(/^locavern-sauvegarde-\d{4}-\d{2}-\d{2}\.zip$/);
+    expect(saves[0].name).toMatch(/^locavern-sauvegarde-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.zip$/);
     expect(saves[0].size).toBeGreaterThan(0);
   });
 });

@@ -37,7 +37,7 @@ import { createTagEditor } from './tag-editor.js';
  *   onOpenNoteDialog?: (opts?: { note?: Note; defaultProjectId?: string | null }) => void;
  *   onNavigateLocalRef?: (ref: LocalRef) => void;
  * }} opts
- * @returns {{ flushAndDestroy: () => void; isDispatchingInline: () => boolean }}
+ * @returns {{ flush: () => void; flushAndDestroy: () => void; isDispatchingInline: () => boolean }}
  */
 export function renderNotesView({
   container,
@@ -649,6 +649,9 @@ export function renderNotesView({
   container.replaceChildren(header, bodySlot);
 
   return {
+    flush() {
+      flushPending?.();
+    },
     flushAndDestroy() {
       flushPending?.();
       cleanupEditor();

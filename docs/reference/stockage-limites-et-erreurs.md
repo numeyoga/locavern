@@ -1,7 +1,7 @@
 ---
 version: '0.2.0'
 cree_le: 2026-11-13
-mis_a_jour_le: 2026-11-15
+mis_a_jour_le: 2026-11-16
 ---
 
 # Stockage local, format d’archive et messages d’erreur
@@ -21,7 +21,7 @@ Spécification factuelle du stockage navigateur, des formats d’export et d’a
 Locavern stocke l’ensemble des données localement sur l’appareil, dans la même origine navigateur :
 
 - **Base `IndexedDB` (`locavern-db`, version `4`)**, composée de `8` magasins d’objets :
-  - `meta` : clé `preferences` (préférences d’affichage, vue active, mode Liste/Kanban, sélections courantes, durée des notifications, rétention de la corbeille, colonnes Kanban) et clé `lastBackupAt` (horodatage ISO de la dernière sauvegarde ZIP enregistrée) ;
+  - `meta` : clé `preferences` (préférences d’affichage, vue active, mode Liste/Kanban, sélections courantes, durée des notifications, rétention de la corbeille, colonnes Kanban) clé `lastBackupAt` (horodatage ISO du dernier export ZIP) et clé `exportDirectory` (handle du dossier connecté et `lastSavedAt` de sa dernière écriture réussie) ;
   - `projects` : projets ;
   - `tasks` : tâches, échéances, récurrence, étiquettes, liens internes, listes de contrôle et descriptions ;
   - `notes` : notes enrichies, étiquettes et liens internes ;
@@ -38,15 +38,15 @@ Locavern stocke l’ensemble des données localement sur l’appareil, dans la m
 
 ## Format des archives ZIP (en clair et chiffrées)
 
-Nom par défaut lors de l’export : `locavern-sauvegarde-AAAA-MM-JJ.zip` (écrit via `window.showSaveFilePicker` si disponible et accepté, sinon par téléchargement `<a download>` ; une annulation du sélecteur natif `AbortError` n’écrit aucun fichier et ne met pas à jour `meta.lastBackupAt`).
+Nom par défaut lors de l’export : `locavern-sauvegarde-AAAA-MM-JJTHH-MM-SS.zip` (écrit via `window.showSaveFilePicker` si disponible et accepté, sinon par téléchargement `<a download>` ; une annulation du sélecteur natif `AbortError` n’écrit aucun fichier et ne met pas à jour `meta.lastBackupAt`).
 
 ### Archive ZIP standard (en clair)
 
-| Entrée          | Rôle                                                                                                                                                                                           |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `manifest.json` | Métadonnées d’archive : `format` (`locavern-archive`), `schemaVersion` (`2`), `appVersion` (`0.2.0`), `exportedAt`, compteurs `counts` (`projects`, `tasks`, `notes`, `whiteboards`, `assets`) |
-| `data.json`     | Collections JSON : `schemaVersion` (`2`), `exportedAt`, `projects`, `tasks`, `notes`, `whiteboards`, `assets`, `taskStatuses` ; les archives en `schemaVersion: 1` sont migrées à l’import     |
-| `assets/<id>`   | Fichiers binaires d’images locales associés aux entrées de `data.json`                                                                                                                         |
+| Entrée          | Rôle                                                                                                                                                                                                                            |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `manifest.json` | Métadonnées d’archive : `format` (`locavern-archive`), `schemaVersion` (`2`), `appVersion` (`0.2.0`), `exportedAt`, compteurs `counts` (`projects`, `tasks`, `notes`, `whiteboards`, `assets`)                                  |
+| `data.json`     | Collections JSON : `schemaVersion` (`2`), `exportedAt`, `projects`, `tasks`, `notes`, `whiteboards`, `assets`, `taskStatuses`, `preferences`, `templates`, `trash` ; les archives en `schemaVersion: 1` sont migrées à l’import |
+| `assets/<id>`   | Fichiers binaires d’images locales associés aux entrées de `data.json`                                                                                                                                                          |
 
 ### Conteneur chiffré par mot de passe (optionnel)
 
@@ -75,7 +75,9 @@ Lorsqu’un mot de passe est fourni, l’archive ZIP interne (`level: 6`) est ch
 
 - **Portée du schéma d’archive `schemaVersion: 2`** :
   - Sont inclus et restaurés par l’import ZIP (`replace`, `merge`, `projects`) : `projects`, `tasks` (y compris `recurrence`, `checklist`, `descriptionDoc`), `notes`, `whiteboards`, `assets` et `taskStatuses`. En mode `merge` et `projects`, les identifiants en collision sont réalloués de façon cohérente avec les références entre entités et les `assetIds` ;
-  - Ne sont pas transportés par le schéma d’archive `v2` (`src/core/schema.js`) et restent strictement locaux à `IndexedDB` / `localStorage` : les étiquettes (`tags`), les liens internes (`links`), le contenu de la corbeille (`trash`), les modèles personnalisés (`templates`), ainsi que les réglages visuels `localStorage`.
+  - Les étiquettes et liens internes sont préservés. Les nouvelles archives incluent aussi les préférences `AppPreferences`, la corbeille et les modèles personnalisés, restaurés en mode remplacement complet. Ces champs sont facultatifs pour accepter les anciennes archives. La fusion et la sélection de projets conservent les préférences, modèles et la corbeille de destination. Les réglages visuels `localStorage` (thème et taille du texte), autorisations de disque et métadonnées du dossier ne sont pas transportés.
+
+La sauvegarde automatique utilise un fichier stable `locavern-sauvegarde.zip`, créé à la connexion du dossier et actualisé après trois secondes sans modification. Les écritures sont sérialisées et la date est enregistrée après fermeture réussie du flux. Une modification pendant l’écriture programme une nouvelle copie. Les sauvegardes en arrière-plan interrogent les autorisations sans afficher de sélecteur ; un accès non accordé suspend l’écriture jusqu’à une action utilisateur. L’onglet en lecture seule n’écrit pas de sauvegarde. Les exports ponctuels restent indépendants du dossier connecté.
 
 | Élément                                             | Valeur ou contrainte vérifiée                                                                                           |
 | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |

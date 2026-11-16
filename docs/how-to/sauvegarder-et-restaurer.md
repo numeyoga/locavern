@@ -13,7 +13,7 @@ Pour les détails techniques du format ZIP, de la portée exacte des archives et
 ## Sommaire
 
 - [Vérifier l’état du stockage et demander la persistance](#vérifier-létat-du-stockage-et-demander-la-persistance)
-- [Choisir un dossier pour les exports](#choisir-un-dossier-pour-les-exports)
+- [Activer la sauvegarde automatique dans un dossier](#activer-la-sauvegarde-automatique-dans-un-dossier)
 - [Exporter une archive ZIP (en clair ou chiffrée)](#exporter-une-archive-zip-en-clair-ou-chiffrée)
 - [Importer, fusionner ou restaurer une archive ZIP](#importer-fusionner-ou-restaurer-une-archive-zip)
 - [Récupérer ou purger depuis la corbeille locale](#récupérer-ou-purger-depuis-la-corbeille-locale)
@@ -28,24 +28,30 @@ La section **État du stockage local** indique le nombre de projets, tâches, no
 - Si le badge indique **Stockage persistant**, le navigateur protège la base contre l’effacement automatique en cas de manque d’espace disque.
 - Si le badge indique **Stockage standard**, cliquez sur **Demander la persistance au navigateur** (bouton visible hors mode lecture seule). Si le navigateur refuse l’élévation, exportez régulièrement des archives ZIP pour sécuriser vos données.
 
-## Choisir un dossier pour les exports
+## Activer la sauvegarde automatique dans un dossier
 
-1. Ouvrez **Sauvegardes et stockage**.
-2. Dans **Dossier des exports**, cliquez sur **Choisir un dossier** et autorisez l’accès en écriture dans le sélecteur du navigateur.
-3. Vos prochains exports ZIP, Markdown, iCalendar, SVG et PNG seront enregistrés directement dans ce dossier. Un fichier du même nom sera remplacé.
+1. Ouvrez **Sauvegardes** dans la barre latérale.
+2. Dans **Sauvegarde dans un dossier**, cliquez sur **Connecter un dossier** et autorisez l’accès en écriture.
+3. Une première copie de vos données est immédiatement créée dans `locavern-sauvegarde.zip`. Les données restent également dans le navigateur.
 
-Locavern mémorise le dossier sur cet appareil lorsque le navigateur le permet. Sinon, un message indique que le choix vaut uniquement pour la session. Après réouverture, le navigateur peut redemander l’autorisation lors du prochain export. En cas de refus d’accès, l’export signale une erreur ; vous pouvez réautoriser l’accès ou retirer le dossier.
+Après une modification, Locavern attend trois secondes sans nouvelle modification puis remplace ce même fichier. La copie automatique est en clair ; le chiffrement par mot de passe reste disponible pour les exports ponctuels.
 
-Utilisez **Changer de dossier** pour sélectionner un autre emplacement, ou **Retirer le dossier** pour revenir au sélecteur de fichier ou au téléchargement classique. Retirer le dossier ne supprime aucun fichier sur le disque. Les navigateurs sans prise en charge de cette fonction conservent le téléchargement classique.
+Le bouton **Sauvegarder** en haut à droite affiche une disquette lorsqu’un dossier est connecté et déclenche une sauvegarde immédiate. La carte du dossier propose également **Sauvegarder maintenant**. La barre latérale continue d’ouvrir la modale. Sans dossier connecté, le bouton supérieur ouvre cette modale.
+
+L’état indique les modifications en attente, l’écriture en cours, la réussite ou l’échec. La date de dernière écriture réussie n’avance qu’après fermeture du fichier. La sauvegarde est effectuée par l’onglet actif, pendant que l’application est ouverte. Les modifications récentes restent dans le navigateur si vous fermez l’application avant la prochaine copie.
+
+Le dossier est mémorisé lorsque le navigateur le permet. Sinon, le choix vaut uniquement pour la session. Si le navigateur exige une nouvelle autorisation après réouverture, la sauvegarde est suspendue : cliquez sur **Réautoriser et sauvegarder** ou sur la disquette. Aucune demande d’autorisation n’est ouverte en arrière-plan.
+
+**Changer de dossier** crée une première copie dans le nouvel emplacement. **Déconnecter** arrête la sauvegarde automatique sans supprimer les fichiers existants. Les exports ponctuels ZIP, Markdown, iCalendar, SVG et PNG restent indépendants de ce dossier. Sur les navigateurs incompatibles, les exports utilisent le sélecteur de fichier ou le téléchargement classique.
 
 ## Exporter une archive ZIP (en clair ou chiffrée)
 
 1. Ouvrez **Sauvegardes et stockage** (`Sauvegarder`).
 2. Par défaut, l’archive est générée en clair. Pour protéger son contenu par mot de passe, cochez **Protéger l’archive par un mot de passe (AES-GCM)**, puis saisissez et confirmez le mot de passe dans **Mot de passe de chiffrement** et **Confirmer le mot de passe** (bouton œil pour vérifier la saisie).
 3. Cliquez sur **Exporter l’archive ZIP**.
-4. Si un dossier d’export est choisi, le fichier `locavern-sauvegarde-AAAA-MM-JJ.zip` y est enregistré directement. Sinon, choisissez son emplacement dans le sélecteur de fichier natif (ou laissez le téléchargement standard du navigateur s’effectuer). Si vous annulez le sélecteur natif, aucun fichier n’est écrit et la date **Dernière sauvegarde ZIP** n’est pas modifiée.
+4. Choisissez l’emplacement du fichier daté `locavern-sauvegarde-AAAA-MM-JJTHH-MM-SS.zip` dans le sélecteur natif, ou laissez le téléchargement standard s’effectuer. Cet export ne remplace pas le fichier de sauvegarde automatique. Si vous annulez le sélecteur natif, aucun fichier n’est écrit et la date **Dernière sauvegarde ZIP** n’est pas modifiée.
 
-L’archive inclut vos projets, tâches (y compris récurrence, checklists et descriptions), notes, tableaux blancs, statuts Kanban personnalisés et images locales au format binaire d’origine. Note : les étiquettes (`tags`), liens internes (`links`), éléments présents dans la corbeille et modèles personnalisés restent uniquement dans `IndexedDB` sur cet appareil (voir [Stockage local, format d’archive et messages d’erreur](../reference/stockage-limites-et-erreurs.md#portée-des-archives-et-limites-techniques)).
+L’archive inclut projets, tâches (récurrence, checklists, descriptions et étiquettes), notes, tableaux blancs, liens internes, images, statuts Kanban, préférences de l’application, modèles personnalisés et corbeille. Pour tout restaurer, choisissez **Remplacer toutes les données locales**. Les modes de fusion et d’import sélectif conservent les préférences, modèles et la corbeille déjà présents ; seuls les éléments sélectionnés et leurs liens internes sont importés. Les anciens fichiers ZIP restent importables mais ne contiennent pas nécessairement ces informations supplémentaires.
 
 > **Important :** si vous activez le chiffrement par mot de passe, conservez ce mot de passe en lieu sûr. En l’absence de serveur ou de compte, aucune récupération n’est possible en cas d’oubli.
 

@@ -4,8 +4,8 @@ import { buildBackupPayload, formatBackupAgeLabel, prepareBackupMerge } from '..
 import { buildArchiveZipBlob, parseArchiveFile, saveArchiveBlob } from '../archive-file.js';
 import {
   chooseExportDirectory,
-  ensureExportDirectoryPermission,
   forgetExportDirectory,
+  getDirectoryBackupInfo,
   getExportDirectoryName,
   supportsExportDirectory,
 } from '../export-directory.js';
@@ -107,10 +107,11 @@ function createPasswordField({ id, label, autocomplete, describedBy }) {
  *     dispatch: (cmd: AppCommand) => { state: AppState; effects: StoreEffect[] };
  *   };
  *   appVersion: string;
- *   onBeforeReplace?: () => void;
+ *   directoryBackup: ReturnType<typeof import('../../core/directory-backup.js').createDirectoryBackup>;
+ *   onBeforeReplace?: () => Promise<void>;
  * }} opts
  */
-export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
+export function wireBackupModal({ db, store, appVersion, directoryBackup, onBeforeReplace }) {
   const modal = /** @type {HTMLDialogElement | null} */ (document.getElementById('modal-backup'));
   const body = document.getElementById('modal-backup-body');
   if (!modal || !body) return;
@@ -118,6 +119,8 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
   const modalBody = body;
 
   let renderSeq = 0;
+  let updateDirectoryUi = () => {};
+  directoryBackup.subscribe(() => updateDirectoryUi());
 
   function renderModalBody() {
     const seq = ++renderSeq;
@@ -242,7 +245,7 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
     directorySection.className = 'lc-backup-section';
     const directoryTitle = document.createElement('h3');
     directoryTitle.className = 'cv-h4';
-    directoryTitle.textContent = 'Dossier des exports';
+    directoryTitle.textContent = 'Sauvegarde dans un dossier';
     const directoryStatus = document.createElement('p');
     directoryStatus.className = 'cv-caption';
     directoryStatus.id = 'export-directory-status';
@@ -250,7 +253,7 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
     const directoryHint = document.createElement('p');
     directoryHint.className = 'cv-caption';
     directoryHint.textContent =
-      'Les archives ZIP, notes Markdown, calendriers et images seront enregistrés dans ce dossier. Un fichier du même nom sera remplacé.';
+      'Vos données restent dans le navigateur et sont copiées automatiquement dans locavern-sauvegarde.zip après quelques secondes sans modification. Ce fichier est remplacé à chaque sauvegarde. La copie automatique est en clair ; utilisez l’export ponctuel pour créer une archive chiffrée.';
     const chooseDirectoryBtn = document.createElement('button');
     chooseDirectoryBtn.type = 'button';
     chooseDirectoryBtn.className = 'cv-btn cv-btn--sm';
@@ -259,23 +262,49 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
     forgetDirectoryBtn.type = 'button';
     forgetDirectoryBtn.className = 'cv-btn cv-btn--sm';
     forgetDirectoryBtn.id = 'btn-forget-export-directory';
-    forgetDirectoryBtn.textContent = 'Retirer le dossier';
-    function updateDirectoryUi() {
+    forgetDirectoryBtn.textContent = 'Déconnecter';
+    const saveDirectoryBtn = document.createElement('button');
+    saveDirectoryBtn.type = 'button';
+    saveDirectoryBtn.className = 'cv-btn cv-btn--primary cv-btn--sm';
+    saveDirectoryBtn.id = 'btn-save-directory-now';
+    updateDirectoryUi = () => {
       const name = getExportDirectoryName();
+      const current = directoryBackup.getState();
+      const info = getDirectoryBackupInfo();
+      const labels = {
+        disconnected: 'Aucun dossier connecté.',
+        pending: 'Modifications à sauvegarder.',
+        saving: 'Sauvegarde en cours…',
+        saved: 'Sauvegardé.',
+        suspended: 'Sauvegarde suspendue : accès au dossier à réautoriser.',
+        error: 'Échec de la sauvegarde.',
+        readonly: 'La sauvegarde est gérée par l’onglet actif.',
+      };
+      directoryStatus.dataset.status = current.status;
       directoryStatus.textContent = name
-        ? `Dossier choisi : ${name}`
-        : 'Aucun dossier choisi : sélecteur de fichier ou téléchargement classique.';
-      chooseDirectoryBtn.textContent = name ? 'Changer de dossier' : 'Choisir un dossier';
+        ? `Dossier : ${name}. ${labels[current.status]}`
+        : labels.disconnected;
+      const lastSaved = current.lastSavedAt ?? info.lastSavedAt;
+      if (lastSaved)
+        directoryStatus.textContent += ` Dernière écriture réussie : ${new Date(lastSaved).toLocaleString('fr-CH')}.`;
+      if (current.error) directoryStatus.textContent += ` ${current.error}`;
+      if (name && !info.remembered)
+        directoryStatus.textContent += ' Connexion valable pour cette session uniquement.';
+      chooseDirectoryBtn.textContent = name ? 'Changer de dossier' : 'Connecter un dossier';
+      chooseDirectoryBtn.disabled = current.status === 'saving' || store.getState().readOnly;
+      forgetDirectoryBtn.disabled = current.status === 'saving' || store.getState().readOnly;
       forgetDirectoryBtn.hidden = !name;
-    }
+      saveDirectoryBtn.hidden = !name;
+      saveDirectoryBtn.disabled = current.status === 'saving' || store.getState().readOnly;
+      saveDirectoryBtn.textContent =
+        current.status === 'suspended' ? 'Réautoriser et sauvegarder' : 'Sauvegarder maintenant';
+    };
     updateDirectoryUi();
     chooseDirectoryBtn.addEventListener('click', async () => {
       chooseDirectoryBtn.disabled = true;
       try {
-        const result = await chooseExportDirectory();
-        updateDirectoryUi();
-        if (!result.remembered)
-          directoryStatus.textContent += ' (Choix valable pour cette session uniquement.)';
+        await chooseExportDirectory();
+        await directoryBackup.saveNow();
       } catch (error) {
         if (!(error instanceof Error && error.name === 'AbortError')) {
           notify({
@@ -285,7 +314,7 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
           });
         }
       } finally {
-        chooseDirectoryBtn.disabled = false;
+        updateDirectoryUi();
       }
     });
     forgetDirectoryBtn.addEventListener('click', async () => {
@@ -300,9 +329,17 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
         });
       }
     });
+    saveDirectoryBtn.addEventListener('click', () => {
+      void directoryBackup.saveNow();
+    });
     directorySection.append(directoryTitle, directoryStatus);
     if (supportsExportDirectory()) {
-      directorySection.append(directoryHint, chooseDirectoryBtn, forgetDirectoryBtn);
+      directorySection.append(
+        directoryHint,
+        chooseDirectoryBtn,
+        saveDirectoryBtn,
+        forgetDirectoryBtn,
+      );
     } else {
       directoryStatus.textContent =
         'Ce navigateur ne permet pas de choisir un dossier pour les exports. Le téléchargement classique reste disponible.';
@@ -437,7 +474,6 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
 
       exportBtn.disabled = true;
       try {
-        await ensureExportDirectoryPermission();
         const current = store.getState();
         const now = new Date().toISOString();
         const { manifest, data } = buildBackupPayload(current, { now, appVersion });
@@ -448,7 +484,7 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
           assetBlobs,
           ...(useEncryption ? { password } : {}),
         });
-        const datePart = now.slice(0, 10);
+        const datePart = now.slice(0, 19).replaceAll(':', '-');
         const result = await saveArchiveBlob(zipBlob, `locavern-sauvegarde-${datePart}.zip`);
         if (!result.saved) return;
         await setLastBackupAt(db, now);
@@ -695,18 +731,11 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
           });
           if (!confirmed) return;
 
-          onBeforeReplace?.();
+          await onBeforeReplace?.();
           await replaceAllWithBlobs(db, parsed.data, parsed.blobs);
           store.dispatch({
             type: 'replace_all',
-            payload: {
-              projects: parsed.data.projects,
-              tasks: parsed.data.tasks,
-              notes: parsed.data.notes,
-              whiteboards: parsed.data.whiteboards,
-              assets: parsed.data.assets,
-              taskStatuses: parsed.data.taskStatuses,
-            },
+            payload: parsed.data,
           });
           notify({
             status: 'success',
@@ -920,7 +949,7 @@ export function wireBackupModal({ db, store, appVersion, onBeforeReplace }) {
       });
       if (!confirmed) return;
 
-      onBeforeReplace?.();
+      await onBeforeReplace?.();
       const emptyPayload = { projects: [], tasks: [], notes: [], whiteboards: [], assets: [] };
       await replaceAllWithBlobs(db, emptyPayload, new Map());
       await setLastBackupAt(db, null);

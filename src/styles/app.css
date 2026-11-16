@@ -1054,6 +1054,12 @@ dialog::backdrop {
 }
 
 @media (max-width: 767px) {
+  #topbar-backup-status {
+    max-inline-size: 8rem;
+    font-size: 0.6875rem;
+    line-height: 1.2;
+  }
+
   .lc-theme-switch__label,
   .lc-topbar-btn-label {
     display: none;

@@ -158,12 +158,12 @@ export async function loadAllAssetBlobs(db) {
 /**
  * Replace all collections + binary blobs atomically in IndexedDB.
  * @param {import('idb').IDBPDatabase} db
- * @param {{ projects: readonly Project[]; tasks: readonly Task[]; notes: readonly Note[]; whiteboards: readonly Whiteboard[]; assets: readonly AssetMeta[] }} payload
+ * @param {{ projects: readonly Project[]; tasks: readonly Task[]; notes: readonly Note[]; whiteboards: readonly Whiteboard[]; assets: readonly AssetMeta[]; trash?: readonly TrashItem[]; templates?: readonly LocalTemplate[]; preferences?: AppPreferences }} payload
  * @param {ReadonlyMap<string, Blob>} blobs
  */
 export async function replaceAllWithBlobs(db, payload, blobs) {
   const tx = db.transaction(
-    ['meta', 'projects', 'tasks', 'notes', 'whiteboards', 'assets', 'trash'],
+    ['meta', 'projects', 'tasks', 'notes', 'whiteboards', 'assets', 'trash', 'templates'],
     'readwrite',
   );
   await Promise.all([
@@ -175,6 +175,13 @@ export async function replaceAllWithBlobs(db, payload, blobs) {
     tx.objectStore('trash').clear(),
   ]);
   await tx.objectStore('meta').put({ key: 'schema', schemaVersion: 2 });
+  if (payload.templates !== undefined) {
+    await tx.objectStore('templates').clear();
+    for (const template of payload.templates) tx.objectStore('templates').put(template);
+  }
+  for (const item of payload.trash ?? []) tx.objectStore('trash').put(item);
+  if (payload.preferences)
+    await tx.objectStore('meta').put({ key: 'preferences', value: payload.preferences });
   for (const p of payload.projects) {
     tx.objectStore('projects').put(p);
   }

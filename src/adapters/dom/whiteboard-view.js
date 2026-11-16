@@ -6,7 +6,6 @@ import { instantiateWhiteboardTemplate } from '../../core/templates.js';
 import { createTemplatePicker } from './template-picker.js';
 import { initTooltips } from './tooltip.js';
 import { saveArchiveBlob } from '../archive-file.js';
-import { ensureExportDirectoryPermission } from '../export-directory.js';
 import { mountWhiteboardCanvas } from '../whiteboard-canvas.js';
 import { closeDialogById, confirmAction, notify, openDialogById } from './app-shell.js';
 import { createLinkEditor } from './link-editor.js';
@@ -68,7 +67,7 @@ function reparentElement(targetParent, node) {
  *   onOpenWhiteboardDialog?: (opts?: { whiteboard?: Whiteboard; defaultProjectId?: string | null }) => void;
  *   onNavigateLocalRef?: (ref: LocalRef) => void;
  * }} opts
- * @returns {{ flushAndDestroy: () => void; isDispatchingInline: () => boolean }}
+ * @returns {{ flush: () => void; flushAndDestroy: () => void; isDispatchingInline: () => boolean }}
  */
 export function renderWhiteboardView({
   container,
@@ -584,7 +583,6 @@ export function renderWhiteboardView({
       exportSvgBtn.addEventListener('click', async () => {
         if (!canvasHandle) return;
         try {
-          await ensureExportDirectoryPermission();
           const blob = await canvasHandle.exportSvgBlob();
           const stem = toSafeFileStem(titleInput.value.trim() || currentWb.title);
           const result = await saveArchiveBlob(blob, `${stem}.svg`, {
@@ -609,7 +607,6 @@ export function renderWhiteboardView({
       exportPngBtn.addEventListener('click', async () => {
         if (!canvasHandle) return;
         try {
-          await ensureExportDirectoryPermission();
           const blob = await canvasHandle.exportPngBlob();
           const stem = toSafeFileStem(titleInput.value.trim() || currentWb.title);
           const result = await saveArchiveBlob(blob, `${stem}.png`, {
@@ -773,6 +770,9 @@ export function renderWhiteboardView({
   container.replaceChildren(header, bodySlot);
 
   return {
+    flush() {
+      flushPending?.();
+    },
     flushAndDestroy() {
       flushPending?.();
       cleanupCanvas();

@@ -1,4 +1,4 @@
-/** @import { AllowedImageMimeType, AssetMeta, BackupData, ChecklistItem, Note, Project, Task, TaskPriority, TaskStatus, Whiteboard } from '../types.d.ts' */
+/** @import { AllowedImageMimeType, AppPreferences, AssetMeta, BackupData, ChecklistItem, LocalTemplate, Note, Project, Task, TaskPriority, TaskStatus, TrashItem, Whiteboard } from '../types.d.ts' */
 
 import {
   ALLOWED_IMAGE_MIMES,
@@ -8,10 +8,16 @@ import {
   normalizeDueDate,
   normalizeTaskRecurrence,
   normalizeTaskStatuses,
+  normalizeInputPresentations,
+  normalizeToastDurationSeconds,
+  normalizeTrashRetentionDays,
+  normalizeTags,
+  normalizeLocalRefs,
   sanitizeRichTextDoc,
   sanitizeWhiteboardElements,
   sanitizeWhiteboardViewport,
 } from './model.js';
+import { createLocalTemplate } from './templates.js';
 
 export const CURRENT_SCHEMA_VERSION = 2;
 export const MAX_IMPORT_RECORDS = 10_000;
@@ -130,6 +136,8 @@ function parseTask(raw) {
     position: typeof raw.position === 'number' && raw.position >= 0 ? Math.trunc(raw.position) : 0,
     descriptionDoc,
     checklist,
+    tags: normalizeTags(raw.tags),
+    links: normalizeLocalRefs(raw.links, { kind: 'task', id }),
     assetIds,
     createdAt,
     updatedAt,
@@ -163,6 +171,8 @@ function parseNote(raw) {
     projectId,
     title: title.slice(0, 200),
     contentDoc,
+    tags: normalizeTags(raw.tags),
+    links: normalizeLocalRefs(raw.links, { kind: 'note', id }),
     assetIds,
     createdAt,
     updatedAt,
@@ -199,6 +209,7 @@ export function parseWhiteboard(raw) {
     title: title.slice(0, 200),
     viewport,
     elements,
+    links: normalizeLocalRefs(raw.links, { kind: 'whiteboard', id }),
     assetIds,
     createdAt,
     updatedAt,
@@ -218,6 +229,78 @@ function rawAssetIdsFrom(arr) {
     }
   }
   return out;
+}
+
+/** @param {Record<string, unknown>} raw
+ * @returns {AppPreferences}
+ */
+function parsePreferences(raw) {
+  const activeView = ['tasks', 'projects', 'notes', 'whiteboards', 'calendar', 'today'].includes(
+    String(raw.activeView),
+  )
+    ? /** @type {AppPreferences['activeView']} */ (raw.activeView)
+    : 'today';
+  return {
+    activeView,
+    taskDisplayMode: raw.taskDisplayMode === 'kanban' ? 'kanban' : 'list',
+    selectedProjectId: typeof raw.selectedProjectId === 'string' ? raw.selectedProjectId : null,
+    selectedNoteId: typeof raw.selectedNoteId === 'string' ? raw.selectedNoteId : null,
+    selectedWhiteboardId:
+      typeof raw.selectedWhiteboardId === 'string' ? raw.selectedWhiteboardId : null,
+    inputPresentations: normalizeInputPresentations(raw.inputPresentations),
+    taskStatuses: normalizeTaskStatuses(raw.taskStatuses),
+    toastDurationSeconds: normalizeToastDurationSeconds(raw.toastDurationSeconds),
+    trashRetentionDays: normalizeTrashRetentionDays(raw.trashRetentionDays),
+  };
+}
+
+/** @param {unknown} raw
+ * @returns {TrashItem | null}
+ */
+function parseTrashItem(raw) {
+  if (!isRecord(raw)) return null;
+  const id = asNonEmptyString(raw.id);
+  const title = asNonEmptyString(raw.title);
+  const deletedAt = asNonEmptyString(raw.deletedAt);
+  const expiresAt = asNonEmptyString(raw.expiresAt);
+  if (
+    !id ||
+    !title ||
+    !deletedAt ||
+    !expiresAt ||
+    !Number.isFinite(Date.parse(deletedAt)) ||
+    !Number.isFinite(Date.parse(expiresAt))
+  )
+    return null;
+  const base = {
+    id,
+    title,
+    deletedAt,
+    expiresAt,
+    projectId: typeof raw.projectId === 'string' ? raw.projectId : null,
+    projectName: typeof raw.projectName === 'string' ? raw.projectName : null,
+    assetIds: Array.isArray(raw.assetIds) ? rawAssetIdsFrom(raw.assetIds) : [],
+  };
+  if (raw.kind === 'project') {
+    const project = parseProject(raw.project);
+    if (!project || !Array.isArray(raw.tasks)) return null;
+    const tasks = raw.tasks.map(parseTask);
+    if (tasks.some((task) => !task)) return null;
+    return { ...base, kind: 'project', project, tasks: /** @type {Task[]} */ (tasks) };
+  }
+  if (raw.kind === 'task') {
+    const task = parseTask(raw.task);
+    return task ? { ...base, kind: 'task', task } : null;
+  }
+  if (raw.kind === 'note') {
+    const note = parseNote(raw.note);
+    return note ? { ...base, kind: 'note', note } : null;
+  }
+  if (raw.kind === 'whiteboard') {
+    const whiteboard = parseWhiteboard(raw.whiteboard);
+    return whiteboard ? { ...base, kind: 'whiteboard', whiteboard } : null;
+  }
+  return null;
 }
 
 /**
@@ -287,7 +370,15 @@ export function validateBackupData(raw) {
     raw.tasks.length +
     raw.notes.length +
     raw.whiteboards.length +
-    raw.assets.length;
+    raw.assets.length +
+    (Array.isArray(raw.templates) ? raw.templates.length : 0) +
+    (Array.isArray(raw.trash)
+      ? raw.trash.reduce(
+          (count, item) =>
+            count + 1 + (isRecord(item) && Array.isArray(item.tasks) ? item.tasks.length : 0),
+          0,
+        )
+      : 0);
   if (totalCount > MAX_IMPORT_RECORDS) {
     return {
       ok: false,
@@ -372,6 +463,59 @@ export function validateBackupData(raw) {
     assets.push(a);
   }
 
+  /** @type {LocalTemplate[] | undefined} */
+  let templates;
+  if (raw.templates !== undefined) {
+    if (!Array.isArray(raw.templates))
+      return { ok: false, error: 'Modèles invalides dans la sauvegarde.' };
+    templates = [];
+    const ids = new Set();
+    for (const item of raw.templates) {
+      if (
+        !isRecord(item) ||
+        !asNonEmptyString(item.id) ||
+        !asNonEmptyString(item.name) ||
+        !asNonEmptyString(item.createdAt) ||
+        ids.has(item.id)
+      )
+        return { ok: false, error: 'Modèle invalide ou dupliqué dans la sauvegarde.' };
+      try {
+        templates.push(
+          createLocalTemplate({
+            id: String(item.id),
+            kind: /** @type {LocalTemplate['kind']} */ (item.kind),
+            name: String(item.name),
+            now: String(item.createdAt),
+            checklistItems: /** @type {string[]} */ (item.checklistItems),
+            contentDoc: /** @type {LocalTemplate['contentDoc']} */ (item.contentDoc),
+            elements: /** @type {LocalTemplate['elements']} */ (item.elements),
+            viewport: /** @type {LocalTemplate['viewport']} */ (item.viewport),
+          }),
+        );
+      } catch {
+        return { ok: false, error: 'Modèle invalide dans la sauvegarde.' };
+      }
+      ids.add(item.id);
+    }
+  }
+  /** @type {TrashItem[] | undefined} */
+  let trash;
+  if (raw.trash !== undefined) {
+    if (!Array.isArray(raw.trash))
+      return { ok: false, error: 'Corbeille invalide dans la sauvegarde.' };
+    trash = [];
+    const ids = new Set();
+    for (const item of raw.trash) {
+      const parsed = parseTrashItem(item);
+      if (!parsed || ids.has(parsed.id))
+        return { ok: false, error: 'Élément de corbeille invalide ou dupliqué.' };
+      ids.add(parsed.id);
+      trash.push(parsed);
+    }
+  }
+  if (raw.preferences !== undefined && !isRecord(raw.preferences))
+    return { ok: false, error: 'Préférences invalides dans la sauvegarde.' };
+
   /** @type {BackupData} */
   const data = {
     schemaVersion: CURRENT_SCHEMA_VERSION,
@@ -381,6 +525,9 @@ export function validateBackupData(raw) {
     notes,
     whiteboards,
     assets,
+    ...(templates ? { templates } : {}),
+    ...(trash ? { trash } : {}),
+    ...(isRecord(raw.preferences) ? { preferences: parsePreferences(raw.preferences) } : {}),
     ...(Array.isArray(raw.taskStatuses)
       ? { taskStatuses: normalizeTaskStatuses(raw.taskStatuses) }
       : {}),

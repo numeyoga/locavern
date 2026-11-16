@@ -1,4 +1,4 @@
-/** @import { AppState, AssetMeta, BackupData, BackupManifest, Note, Project, RichTextDoc, RichTextNode, Task, TaskStatusConfig, Whiteboard } from '../types.d.ts' */
+/** @import { AppState, AssetMeta, BackupData, BackupManifest, LocalRef, Note, Project, RichTextDoc, RichTextNode, Task, TaskStatusConfig, Whiteboard } from '../types.d.ts' */
 
 import { collectDocAssetIds, collectWhiteboardAssetIds } from './model.js';
 import {
@@ -25,6 +25,9 @@ export function buildBackupPayload(state, { now, appVersion }) {
     whiteboards: [...state.whiteboards],
     assets: [...state.assets],
     taskStatuses: [...state.preferences.taskStatuses],
+    preferences: state.preferences,
+    templates: [...state.templates],
+    trash: [...state.trash],
   };
 
   /** @type {BackupManifest} */
@@ -274,6 +277,31 @@ export function prepareBackupMerge(currentState, importedData, importedBlobs, op
     w.projectId === null ? includeUnassigned : projectIdMap.has(w.projectId),
   );
 
+  // Allocate every entity ID before rewriting cross-entity links.
+  const taskIdMap = new Map(
+    candidateTasks.map((task) => [task.id, allocateUniqueId(task.id, takenTaskIds, generateId)]),
+  );
+  const noteIdMap = new Map(
+    candidateNotes.map((note) => [note.id, allocateUniqueId(note.id, takenNoteIds, generateId)]),
+  );
+  const whiteboardIdMap = new Map(
+    candidateWhiteboards.map((wb) => [
+      wb.id,
+      allocateUniqueId(wb.id, takenWhiteboardIds, generateId),
+    ]),
+  );
+  /** @param {readonly LocalRef[] | undefined} links
+   * @returns {LocalRef[]}
+   */
+  function remapLinks(links) {
+    return (links ?? []).flatMap((link) => {
+      const map =
+        link.kind === 'task' ? taskIdMap : link.kind === 'note' ? noteIdMap : whiteboardIdMap;
+      const id = map.get(link.id);
+      return id ? [{ kind: link.kind, id }] : [];
+    });
+  }
+
   /** @type {Set<string>} */
   const neededAssetIds = new Set();
   for (const task of candidateTasks) {
@@ -311,7 +339,7 @@ export function prepareBackupMerge(currentState, importedData, importedBlobs, op
 
   /** @type {Task[]} */
   const tasks = candidateTasks.map((task) => {
-    const nextId = allocateUniqueId(task.id, takenTaskIds, generateId);
+    const nextId = taskIdMap.get(task.id) ?? task.id;
     const nextProjectId = projectIdMap.get(task.projectId) ?? task.projectId;
     const nextDoc = remapRichTextDocAssets(task.descriptionDoc, assetIdMap);
     const nextAssetIds = remapAssetIdList(task.assetIds, assetIdMap);
@@ -320,13 +348,14 @@ export function prepareBackupMerge(currentState, importedData, importedBlobs, op
       id: nextId,
       projectId: nextProjectId,
       descriptionDoc: nextDoc,
+      links: remapLinks(task.links),
       assetIds: nextAssetIds,
     });
   });
 
   /** @type {Note[]} */
   const notes = candidateNotes.map((note) => {
-    const nextId = allocateUniqueId(note.id, takenNoteIds, generateId);
+    const nextId = noteIdMap.get(note.id) ?? note.id;
     const nextProjectId =
       note.projectId === null ? null : (projectIdMap.get(note.projectId) ?? note.projectId);
     const nextDoc = remapRichTextDocAssets(note.contentDoc, assetIdMap);
@@ -336,13 +365,14 @@ export function prepareBackupMerge(currentState, importedData, importedBlobs, op
       id: nextId,
       projectId: nextProjectId,
       contentDoc: nextDoc,
+      links: remapLinks(note.links),
       assetIds: nextAssetIds,
     });
   });
 
   /** @type {Whiteboard[]} */
   const whiteboards = candidateWhiteboards.map((wb) => {
-    const nextId = allocateUniqueId(wb.id, takenWhiteboardIds, generateId);
+    const nextId = whiteboardIdMap.get(wb.id) ?? wb.id;
     const nextProjectId =
       wb.projectId === null ? null : (projectIdMap.get(wb.projectId) ?? wb.projectId);
     const nextElements = wb.elements.map((el) => {
@@ -356,6 +386,7 @@ export function prepareBackupMerge(currentState, importedData, importedBlobs, op
       id: nextId,
       projectId: nextProjectId,
       elements: nextElements,
+      links: remapLinks(wb.links),
       assetIds: nextAssetIds,
     });
   });
