@@ -60,7 +60,7 @@ function makeBadge(label, badgeClass, opts = {}) {
  *     sortBy: 'position' | 'dueDate' | 'priority';
  *   };
  *   onOpenNewProject: () => void;
- *   onOpenTaskDrawer: (task?: Task) => void;
+ *   onOpenTaskDrawer: (task?: Task, opts?: { defaultStatus?: TaskStatus | null; mode?: 'view' | 'edit' }) => void;
  * }} opts
  */
 export function renderTaskListView({
@@ -76,7 +76,7 @@ export function renderTaskListView({
   const header = createTaskWorkspaceHeader({
     state,
     dispatch: store.dispatch,
-    onOpenNewTask: () => onOpenTaskDrawer(undefined),
+    onOpenNewTask: () => onOpenTaskDrawer(undefined, { mode: 'edit' }),
   });
 
   if (activeProjects.length === 0) {
@@ -385,7 +385,7 @@ export function renderTaskListView({
       cta.className = 'cv-btn cv-btn--primary';
       cta.disabled = currentState.readOnly;
       cta.textContent = 'Nouvelle tâche';
-      cta.addEventListener('click', () => onOpenTaskDrawer(undefined));
+      cta.addEventListener('click', () => onOpenTaskDrawer(undefined, { mode: 'edit' }));
       empty.append(iconBox, title, desc, cta);
       tableSlot.replaceChildren(empty);
       return;
@@ -464,7 +464,7 @@ export function renderTaskListView({
       titleBtn.type = 'button';
       titleBtn.className = 'lc-row-title-btn';
       titleBtn.textContent = task.title;
-      titleBtn.addEventListener('click', () => onOpenTaskDrawer(task));
+      titleBtn.addEventListener('click', () => onOpenTaskDrawer(task, { mode: 'view' }));
       tdTitle.append(titleBtn);
       if (task.recurrence || (task.tags ?? []).length > 0) {
         const tagList = document.createElement('div');
@@ -616,12 +616,20 @@ export function renderTaskListView({
         }
       });
 
+      const consultBtn = document.createElement('button');
+      consultBtn.type = 'button';
+      consultBtn.className = 'cv-btn cv-btn--ghost cv-btn--sm';
+      consultBtn.textContent = 'Consulter';
+      consultBtn.setAttribute('aria-label', `Consulter « ${task.title} »`);
+      consultBtn.addEventListener('click', () => onOpenTaskDrawer(task, { mode: 'view' }));
+
       const editBtn = document.createElement('button');
       editBtn.type = 'button';
       editBtn.className = 'cv-btn cv-btn--ghost cv-btn--sm';
-      editBtn.textContent = 'Ouvrir';
-      editBtn.setAttribute('aria-label', `Ouvrir « ${task.title} »`);
-      editBtn.addEventListener('click', () => onOpenTaskDrawer(task));
+      editBtn.disabled = currentState.readOnly;
+      editBtn.textContent = 'Modifier';
+      editBtn.setAttribute('aria-label', `Modifier « ${task.title} »`);
+      editBtn.addEventListener('click', () => onOpenTaskDrawer(task, { mode: 'edit' }));
 
       const archiveBtn = document.createElement('button');
       archiveBtn.type = 'button';
@@ -662,7 +670,7 @@ export function renderTaskListView({
         notify({ status: 'info', title: 'Tâche placée dans la corbeille', text: task.title });
       });
 
-      actions.append(quickStatus, editBtn, archiveBtn, delBtn);
+      actions.append(quickStatus, consultBtn, editBtn, archiveBtn, delBtn);
       tdActions.append(actions);
 
       tr.append(tdTitle, tdProject, tdStatus, tdPriority, tdDue, tdActions);

@@ -1,5 +1,6 @@
 /** @import { AppCommand, AppState, LocalRef, StoreEffect, Whiteboard, WhiteboardElement, WhiteboardViewport } from '../../types.d.ts' */
 
+import { formatShortDateFr } from '../../core/dates.js';
 import { collectWhiteboardAssetIds } from '../../core/model.js';
 import {
   selectProjectById,
@@ -9,7 +10,7 @@ import {
 } from '../../core/store.js';
 import { instantiateWhiteboardTemplate } from '../../core/templates.js';
 import { createTemplatePicker } from './template-picker.js';
-import { initTooltips } from './tooltip.js';
+import { initTooltips, setTooltip } from './tooltip.js';
 import { saveArchiveBlob } from '../archive-file.js';
 import { ensureExportDirectoryPermission } from '../export-directory.js';
 import { mountWhiteboardCanvas } from '../whiteboard-canvas.js';
@@ -57,6 +58,7 @@ function reparentElement(targetParent, node) {
 
 /**
  * Render the standalone Whiteboards view with native SVG canvas and local images.
+ * Supports separate Consultation (read-only) and Modification (edit) modes.
  * Keeps header controls mounted when filtering so search input never loses focus.
  * @param {{
  *   container: HTMLElement;
@@ -68,9 +70,10 @@ function reparentElement(targetParent, node) {
  *     projectId: string | null | 'all';
  *     query: string;
  *   };
+ *   modeState: { whiteboardId: string | null; mode: 'view' | 'edit' };
  *   resolveAssetUrl: (assetId: string) => Promise<string | null>;
  *   uploadLocalImage: (file: File) => Promise<{ assetId: string; alt: string } | null>;
- *   onOpenWhiteboardDialog?: (opts?: { whiteboard?: Whiteboard; defaultProjectId?: string | null }) => void;
+ *   onOpenWhiteboardDialog?: (opts?: { whiteboard?: Whiteboard; mode?: 'view' | 'edit'; defaultProjectId?: string | null }) => void;
  *   onNavigateLocalRef?: (ref: LocalRef) => void;
  * }} opts
  * @returns {{ flushAndDestroy: () => void; isDispatchingInline: () => boolean }}
@@ -79,6 +82,7 @@ export function renderWhiteboardView({
   container,
   store,
   filters,
+  modeState,
   resolveAssetUrl,
   uploadLocalImage,
   onOpenWhiteboardDialog,
@@ -179,10 +183,190 @@ export function renderWhiteboardView({
     const state = store.getState();
     const defaultProjId =
       filters.projectId === 'all' ? state.preferences.selectedProjectId : filters.projectId;
-    onOpenWhiteboardDialog?.({ defaultProjectId: defaultProjId ?? null });
+    onOpenWhiteboardDialog?.({ defaultProjectId: defaultProjId ?? null, mode: 'edit' });
   }
 
   newWbBtn.addEventListener('click', openNewWhiteboardDialog);
+
+  /**
+   * Wire the shared maximize dialog (#dialog-whiteboard-max) to a canvasHost & canvasHandle.
+   * @param {HTMLElement} canvasHost
+   * @param {() => string} getTitle
+   * @returns {(() => void) | undefined}
+   */
+  function wireMaximizeDialog(canvasHost, getTitle) {
+    const maxDialog = /** @type {HTMLDialogElement | null} */ (
+      document.getElementById('dialog-whiteboard-max')
+    );
+    if (!maxDialog) return undefined;
+    const maxDialogTitle = document.getElementById('dialog-whiteboard-max-title');
+    const maxDialogBody = document.getElementById('dialog-whiteboard-max-body');
+    let maxTearingDown = false;
+    let pointerDownOutsideMaxDialog = false;
+    /** @type {ResizeObserver | null} */
+    let maxResizeObserver = null;
+
+    function syncMaxDialogBounds() {
+      if (!maxDialog) return;
+      const mainEl = document.getElementById('shell-main');
+      if (!mainEl) return;
+      const rect = mainEl.getBoundingClientRect();
+      const top = Math.max(0, Math.round(rect.top));
+      const left = Math.max(0, Math.round(rect.left));
+      const right = Math.min(window.innerWidth, Math.round(rect.right));
+      const width = Math.max(240, right - left);
+      const height = Math.max(240, Math.round(window.innerHeight - top));
+      maxDialog.style.setProperty('--lc-wb-max-top', `${top}px`);
+      maxDialog.style.setProperty('--lc-wb-max-left', `${left}px`);
+      maxDialog.style.setProperty('--lc-wb-max-width', `${width}px`);
+      maxDialog.style.setProperty('--lc-wb-max-height', `${height}px`);
+    }
+
+    /** @param {PointerEvent} e */
+    function handleMaxPointerDown(e) {
+      if (!maxDialog) return;
+      const r = maxDialog.getBoundingClientRect();
+      pointerDownOutsideMaxDialog =
+        e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+    }
+
+    /** @param {MouseEvent} e */
+    function handleMaxClickCapture(e) {
+      if (!maxDialog) return;
+      if (e.target === maxDialog && !pointerDownOutsideMaxDialog) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+      }
+      pointerDownOutsideMaxDialog = false;
+    }
+
+    /** @param {Event} e */
+    function handleMaxCancel(e) {
+      if (canvasHandle?.cancelActiveInteraction()) {
+        e.preventDefault();
+      }
+    }
+
+    function restoreWhiteboardFromMaxDialog() {
+      if (!canvasHandle || !maxDialogBody) return;
+      const wbRoot = canvasHandle.getRootElement();
+      reparentElement(canvasHost, wbRoot);
+      canvasHost.style.minHeight = '';
+      maxDialogBody.replaceChildren();
+      canvasHandle.setMaximized(false);
+    }
+
+    function handleMaxClose() {
+      if (!maxDialog) return;
+      maxDialog.returnValue = '';
+      window.removeEventListener('resize', syncMaxDialogBounds);
+      window.removeEventListener('scroll', syncMaxDialogBounds, true);
+      maxResizeObserver?.disconnect();
+      maxResizeObserver = null;
+      if (maxTearingDown) return;
+      restoreWhiteboardFromMaxDialog();
+      canvasHandle?.focusMaximizeButton();
+    }
+
+    function openMaxDialog() {
+      if (!canvasHandle || !maxDialog || !maxDialogBody || maxDialog.open) return;
+      if (maxDialogTitle) {
+        maxDialogTitle.textContent = getTitle();
+      }
+      const hostHeight = Math.round(canvasHost.getBoundingClientRect().height);
+      if (hostHeight > 0) {
+        canvasHost.style.minHeight = `${hostHeight}px`;
+      }
+      syncMaxDialogBounds();
+      const wbRoot = canvasHandle.getRootElement();
+      reparentElement(maxDialogBody, wbRoot);
+      canvasHandle.setMaximized(true);
+      openDialogById('dialog-whiteboard-max');
+      window.addEventListener('resize', syncMaxDialogBounds);
+      window.addEventListener('scroll', syncMaxDialogBounds, true);
+      const mainEl = document.getElementById('shell-main');
+      if (mainEl && typeof ResizeObserver === 'function') {
+        maxResizeObserver?.disconnect();
+        maxResizeObserver = new ResizeObserver(() => syncMaxDialogBounds());
+        maxResizeObserver.observe(mainEl);
+      }
+    }
+
+    function closeMaxDialog() {
+      if (!maxDialog || !maxDialog.open) return;
+      closeDialogById('dialog-whiteboard-max');
+    }
+
+    maxDialog.addEventListener('pointerdown', handleMaxPointerDown);
+    maxDialog.addEventListener('click', handleMaxClickCapture, true);
+    maxDialog.addEventListener('cancel', handleMaxCancel);
+    maxDialog.addEventListener('close', handleMaxClose);
+
+    cleanupMaxDialog = () => {
+      maxTearingDown = true;
+      window.removeEventListener('resize', syncMaxDialogBounds);
+      window.removeEventListener('scroll', syncMaxDialogBounds, true);
+      maxResizeObserver?.disconnect();
+      maxResizeObserver = null;
+      maxDialog.removeEventListener('pointerdown', handleMaxPointerDown);
+      maxDialog.removeEventListener('click', handleMaxClickCapture, true);
+      maxDialog.removeEventListener('cancel', handleMaxCancel);
+      maxDialog.removeEventListener('close', handleMaxClose);
+      if (maxDialog.open) {
+        maxDialog.close();
+      }
+      maxDialog.returnValue = '';
+      if (canvasHandle) {
+        const wbRoot = canvasHandle.getRootElement();
+        if (wbRoot.parentElement !== canvasHost) {
+          reparentElement(canvasHost, wbRoot);
+        }
+      }
+      canvasHost.style.minHeight = '';
+      maxDialogBody?.replaceChildren();
+      maxTearingDown = false;
+    };
+
+    return () => {
+      if (maxDialog.open) {
+        closeMaxDialog();
+      } else {
+        openMaxDialog();
+      }
+    };
+  }
+
+  /**
+   * @param {() => string} getTitle
+   * @param {'svg' | 'png'} fmt
+   */
+  async function exportCanvas(getTitle, fmt) {
+    if (!canvasHandle) return;
+    try {
+      await ensureExportDirectoryPermission();
+      const blob =
+        fmt === 'svg' ? await canvasHandle.exportSvgBlob() : await canvasHandle.exportPngBlob();
+      const stem = toSafeFileStem(getTitle());
+      const ext = fmt;
+      const mime = fmt === 'svg' ? 'image/svg+xml' : 'image/png';
+      const desc = fmt === 'svg' ? 'Image SVG' : 'Image PNG';
+      const result = await saveArchiveBlob(blob, `${stem}.${ext}`, {
+        pickerTypes: [{ description: desc, accept: { [mime]: [`.${ext}`] } }],
+      });
+      if (!result.saved) return;
+      notify({
+        status: 'success',
+        title: `Export ${fmt.toUpperCase()} prêt`,
+        text: `${stem}.${ext}`,
+      });
+    } catch {
+      notify({
+        status: 'danger',
+        title: `Échec de l’export ${fmt.toUpperCase()}`,
+        text: `Impossible de générer le fichier ${fmt.toUpperCase()}.`,
+      });
+    }
+  }
 
   function renderBody() {
     cleanupCanvas();
@@ -195,6 +379,15 @@ export function renderWhiteboardView({
       filteredWhiteboards.find((w) => w.id === state.preferences.selectedWhiteboardId) ??
       filteredWhiteboards[0] ??
       null;
+
+    if (!activeWb) {
+      modeState.whiteboardId = null;
+      modeState.mode = 'view';
+    } else if (modeState.whiteboardId !== activeWb.id) {
+      modeState.whiteboardId = activeWb.id;
+      modeState.mode = 'view';
+    }
+    const effectiveMode = readOnly ? 'view' : modeState.mode;
 
     if (filteredWhiteboards.length === 0) {
       const empty = document.createElement('div');
@@ -234,11 +427,15 @@ export function renderWhiteboardView({
     const listTitleEls = new Map();
 
     for (const wb of filteredWhiteboards) {
+      const row = document.createElement('div');
+      row.className = 'lc-note-row';
+
       const itemBtn = document.createElement('button');
       itemBtn.type = 'button';
       itemBtn.className = 'lc-note-item';
       if (activeWb && wb.id === activeWb.id) {
         itemBtn.setAttribute('aria-current', 'true');
+        row.classList.add('is-active');
       }
       const tSpan = document.createElement('span');
       tSpan.className = 'lc-note-item__title';
@@ -255,17 +452,149 @@ export function renderWhiteboardView({
       itemBtn.append(tSpan, mSpan);
       itemBtn.addEventListener('click', () => {
         flushPending?.();
+        modeState.whiteboardId = wb.id;
+        modeState.mode = 'view';
+        if (activeWb && activeWb.id === wb.id) {
+          renderBody();
+          return;
+        }
         store.dispatch({ type: 'select_whiteboard', whiteboardId: wb.id });
       });
-      listEl.append(itemBtn);
+
+      row.append(itemBtn);
+
+      if (!readOnly) {
+        const editRowBtn = document.createElement('button');
+        editRowBtn.type = 'button';
+        editRowBtn.className = 'cv-btn cv-btn--ghost cv-btn--icon cv-btn--sm lc-note-row__edit';
+        editRowBtn.setAttribute('aria-label', `Modifier le tableau blanc « ${wb.title} »`);
+        setTooltip(editRowBtn, 'Modifier le tableau blanc');
+        const penIc = document.createElement('i');
+        penIc.className = 'ph ph-pencil-simple cv-icon';
+        penIc.setAttribute('aria-hidden', 'true');
+        editRowBtn.append(penIc);
+        editRowBtn.addEventListener('click', () => {
+          flushPending?.();
+          modeState.whiteboardId = wb.id;
+          modeState.mode = 'edit';
+          if (activeWb && activeWb.id === wb.id) {
+            renderBody();
+            return;
+          }
+          store.dispatch({ type: 'select_whiteboard', whiteboardId: wb.id });
+        });
+        row.append(editRowBtn);
+      }
+
+      listEl.append(row);
     }
 
     const editorCard = document.createElement('section');
-    editorCard.className = 'cv-card';
-    editorCard.setAttribute('aria-label', 'Éditeur de tableau blanc');
 
-    if (activeWb) {
+    if (activeWb && effectiveMode === 'view') {
       const currentWb = activeWb;
+      editorCard.className = 'cv-card lc-consult-card';
+      editorCard.setAttribute('aria-label', 'Consultation de tableau blanc');
+
+      const consultHead = document.createElement('div');
+      consultHead.className = 'lc-view-header';
+
+      const titleWrap = document.createElement('div');
+      titleWrap.className = 'lc-consult-head';
+
+      const titleH3 = document.createElement('h3');
+      titleH3.id = 'whiteboard-consult-title';
+      titleH3.className = 'lc-consult-title';
+      titleH3.textContent = currentWb.title;
+
+      const modeBadge = document.createElement('span');
+      modeBadge.className = 'cv-badge';
+      modeBadge.textContent = 'Consultation';
+
+      const proj = currentWb.projectId ? selectProjectById(state, currentWb.projectId) : null;
+      const projBadge = document.createElement('span');
+      projBadge.className = 'cv-badge cv-badge--accent';
+      projBadge.textContent = proj ? proj.name : 'Sans projet';
+
+      const elCount = currentWb.elements.length;
+      const countBadge = document.createElement('span');
+      countBadge.className = 'cv-caption cv-num';
+      countBadge.textContent = `${elCount} élément${elCount > 1 ? 's' : ''} · Mis à jour le ${formatShortDateFr(currentWb.updatedAt.slice(0, 10), true)}`;
+
+      titleWrap.append(titleH3, modeBadge, projBadge, countBadge);
+
+      const headActions = document.createElement('div');
+      headActions.className = 'lc-table-actions';
+      headActions.style.flexWrap = 'wrap';
+
+      const exportSvgBtn = document.createElement('button');
+      exportSvgBtn.type = 'button';
+      exportSvgBtn.id = 'btn-export-wb-svg';
+      exportSvgBtn.className = 'cv-btn cv-btn--sm';
+      exportSvgBtn.textContent = 'Exporter SVG';
+      exportSvgBtn.addEventListener('click', () => void exportCanvas(() => currentWb.title, 'svg'));
+
+      const exportPngBtn = document.createElement('button');
+      exportPngBtn.type = 'button';
+      exportPngBtn.id = 'btn-export-wb-png';
+      exportPngBtn.className = 'cv-btn cv-btn--sm';
+      exportPngBtn.textContent = 'Exporter PNG';
+      exportPngBtn.addEventListener('click', () => void exportCanvas(() => currentWb.title, 'png'));
+
+      headActions.append(exportSvgBtn, exportPngBtn);
+
+      if (!readOnly) {
+        const switchEditBtn = document.createElement('button');
+        switchEditBtn.type = 'button';
+        switchEditBtn.id = 'btn-switch-wb-edit';
+        switchEditBtn.className = 'cv-btn cv-btn--primary cv-btn--sm';
+        const editIc = document.createElement('i');
+        editIc.className = 'ph ph-pencil-simple cv-icon';
+        editIc.setAttribute('aria-hidden', 'true');
+        switchEditBtn.append(editIc, document.createTextNode(' Modifier'));
+        switchEditBtn.addEventListener('click', () => {
+          modeState.whiteboardId = currentWb.id;
+          modeState.mode = 'edit';
+          renderBody();
+        });
+        headActions.append(switchEditBtn);
+      }
+
+      consultHead.append(titleWrap, headActions);
+
+      const linkEditor = createLinkEditor({
+        idPrefix: 'whiteboard-links',
+        state,
+        currentRef: { kind: 'whiteboard', id: currentWb.id },
+        initialLinks: currentWb.links ?? [],
+        readOnly,
+        viewOnly: true,
+        onNavigate(ref) {
+          onNavigateLocalRef?.(ref);
+        },
+      });
+
+      const canvasHost = document.createElement('div');
+      const toggleMax = wireMaximizeDialog(canvasHost, () => currentWb.title);
+
+      canvasHandle = mountWhiteboardCanvas({
+        container: canvasHost,
+        initialViewport: currentWb.viewport,
+        initialElements: currentWb.elements,
+        editable: false,
+        ariaLabel: `Canevas du tableau blanc ${currentWb.title}`,
+        resolveAssetUrl,
+        onUploadImage: async () => null,
+        onToggleMaximize: toggleMax,
+        onChange() {},
+      });
+
+      editorCard.append(consultHead, linkEditor.element, canvasHost);
+    } else if (activeWb) {
+      const currentWb = activeWb;
+      editorCard.className = 'cv-card';
+      editorCard.setAttribute('aria-label', 'Éditeur de tableau blanc');
+
       const metaRow = document.createElement('div');
       metaRow.className = 'lc-view-header';
 
@@ -402,140 +731,10 @@ export function renderWhiteboardView({
         saveTimer = window.setTimeout(() => saveNow(false), 200);
       }
 
-      const maxDialog = /** @type {HTMLDialogElement | null} */ (
-        document.getElementById('dialog-whiteboard-max')
+      const toggleMax = wireMaximizeDialog(
+        canvasHost,
+        () => titleInput.value.trim() || currentWb.title,
       );
-      const maxDialogTitle = document.getElementById('dialog-whiteboard-max-title');
-      const maxDialogBody = document.getElementById('dialog-whiteboard-max-body');
-      let maxTearingDown = false;
-      let pointerDownOutsideMaxDialog = false;
-      /** @type {ResizeObserver | null} */
-      let maxResizeObserver = null;
-
-      function syncMaxDialogBounds() {
-        if (!maxDialog) return;
-        const mainEl = document.getElementById('shell-main');
-        if (!mainEl) return;
-        const rect = mainEl.getBoundingClientRect();
-        const top = Math.max(0, Math.round(rect.top));
-        const left = Math.max(0, Math.round(rect.left));
-        const right = Math.min(window.innerWidth, Math.round(rect.right));
-        const width = Math.max(240, right - left);
-        const height = Math.max(240, Math.round(window.innerHeight - top));
-        maxDialog.style.setProperty('--lc-wb-max-top', `${top}px`);
-        maxDialog.style.setProperty('--lc-wb-max-left', `${left}px`);
-        maxDialog.style.setProperty('--lc-wb-max-width', `${width}px`);
-        maxDialog.style.setProperty('--lc-wb-max-height', `${height}px`);
-      }
-
-      /** @param {PointerEvent} e */
-      function handleMaxPointerDown(e) {
-        if (!maxDialog) return;
-        const r = maxDialog.getBoundingClientRect();
-        pointerDownOutsideMaxDialog =
-          e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
-      }
-
-      /** @param {MouseEvent} e */
-      function handleMaxClickCapture(e) {
-        if (!maxDialog) return;
-        if (e.target === maxDialog && !pointerDownOutsideMaxDialog) {
-          e.stopImmediatePropagation();
-          e.preventDefault();
-        }
-        pointerDownOutsideMaxDialog = false;
-      }
-
-      /** @param {Event} e */
-      function handleMaxCancel(e) {
-        if (canvasHandle?.cancelActiveInteraction()) {
-          e.preventDefault();
-        }
-      }
-
-      function restoreWhiteboardFromMaxDialog() {
-        if (!canvasHandle || !maxDialogBody) return;
-        const wbRoot = canvasHandle.getRootElement();
-        reparentElement(canvasHost, wbRoot);
-        canvasHost.style.minHeight = '';
-        maxDialogBody.replaceChildren();
-        canvasHandle.setMaximized(false);
-      }
-
-      function handleMaxClose() {
-        if (!maxDialog) return;
-        maxDialog.returnValue = '';
-        window.removeEventListener('resize', syncMaxDialogBounds);
-        window.removeEventListener('scroll', syncMaxDialogBounds, true);
-        maxResizeObserver?.disconnect();
-        maxResizeObserver = null;
-        if (maxTearingDown) return;
-        restoreWhiteboardFromMaxDialog();
-        canvasHandle?.focusMaximizeButton();
-      }
-
-      function openMaxDialog() {
-        if (!canvasHandle || !maxDialog || !maxDialogBody || maxDialog.open) return;
-        if (maxDialogTitle) {
-          maxDialogTitle.textContent = titleInput.value.trim() || currentWb.title;
-        }
-        const hostHeight = Math.round(canvasHost.getBoundingClientRect().height);
-        if (hostHeight > 0) {
-          canvasHost.style.minHeight = `${hostHeight}px`;
-        }
-        syncMaxDialogBounds();
-        const wbRoot = canvasHandle.getRootElement();
-        reparentElement(maxDialogBody, wbRoot);
-        canvasHandle.setMaximized(true);
-        openDialogById('dialog-whiteboard-max');
-        window.addEventListener('resize', syncMaxDialogBounds);
-        window.addEventListener('scroll', syncMaxDialogBounds, true);
-        const mainEl = document.getElementById('shell-main');
-        if (mainEl && typeof ResizeObserver === 'function') {
-          maxResizeObserver?.disconnect();
-          maxResizeObserver = new ResizeObserver(() => syncMaxDialogBounds());
-          maxResizeObserver.observe(mainEl);
-        }
-      }
-
-      function closeMaxDialog() {
-        if (!maxDialog || !maxDialog.open) return;
-        closeDialogById('dialog-whiteboard-max');
-      }
-
-      if (maxDialog) {
-        maxDialog.addEventListener('pointerdown', handleMaxPointerDown);
-        maxDialog.addEventListener('click', handleMaxClickCapture, true);
-        maxDialog.addEventListener('cancel', handleMaxCancel);
-        maxDialog.addEventListener('close', handleMaxClose);
-      }
-
-      cleanupMaxDialog = () => {
-        maxTearingDown = true;
-        window.removeEventListener('resize', syncMaxDialogBounds);
-        window.removeEventListener('scroll', syncMaxDialogBounds, true);
-        maxResizeObserver?.disconnect();
-        maxResizeObserver = null;
-        if (maxDialog) {
-          maxDialog.removeEventListener('pointerdown', handleMaxPointerDown);
-          maxDialog.removeEventListener('click', handleMaxClickCapture, true);
-          maxDialog.removeEventListener('cancel', handleMaxCancel);
-          maxDialog.removeEventListener('close', handleMaxClose);
-          if (maxDialog.open) {
-            maxDialog.close();
-          }
-          maxDialog.returnValue = '';
-        }
-        if (canvasHandle) {
-          const wbRoot = canvasHandle.getRootElement();
-          if (wbRoot.parentElement !== canvasHost) {
-            reparentElement(canvasHost, wbRoot);
-          }
-        }
-        canvasHost.style.minHeight = '';
-        maxDialogBody?.replaceChildren();
-        maxTearingDown = false;
-      };
 
       canvasHandle = mountWhiteboardCanvas({
         container: canvasHost,
@@ -552,15 +751,7 @@ export function renderWhiteboardView({
             text: 'Seules les images locales enregistrées sur cet appareil sont autorisées.',
           });
         },
-        onToggleMaximize: maxDialog
-          ? () => {
-              if (maxDialog.open) {
-                closeMaxDialog();
-              } else {
-                openMaxDialog();
-              }
-            }
-          : undefined,
+        onToggleMaximize: toggleMax,
         onChange(next) {
           latestViewport = next.viewport;
           latestElements = next.elements;
@@ -583,6 +774,21 @@ export function renderWhiteboardView({
       actions.className = 'lc-table-actions';
       actions.style.flexWrap = 'wrap';
 
+      const consultBtn = document.createElement('button');
+      consultBtn.type = 'button';
+      consultBtn.id = 'btn-switch-wb-view';
+      consultBtn.className = 'cv-btn cv-btn--sm';
+      const eyeIc = document.createElement('i');
+      eyeIc.className = 'ph ph-eye cv-icon';
+      eyeIc.setAttribute('aria-hidden', 'true');
+      consultBtn.append(eyeIc, document.createTextNode(' Consulter'));
+      consultBtn.addEventListener('click', () => {
+        flushPending?.();
+        modeState.whiteboardId = currentWb.id;
+        modeState.mode = 'view';
+        renderBody();
+      });
+
       const openDialogBtn = document.createElement('button');
       openDialogBtn.type = 'button';
       openDialogBtn.id = 'btn-open-whiteboard-dialog';
@@ -593,7 +799,7 @@ export function renderWhiteboardView({
         flushPending?.();
         const freshWb =
           store.getState().whiteboards.find((w) => w.id === currentWb.id) ?? currentWb;
-        onOpenWhiteboardDialog?.({ whiteboard: freshWb });
+        onOpenWhiteboardDialog?.({ whiteboard: freshWb, mode: 'edit' });
       });
 
       const exportSvgBtn = document.createElement('button');
@@ -601,50 +807,20 @@ export function renderWhiteboardView({
       exportSvgBtn.id = 'btn-export-wb-svg';
       exportSvgBtn.className = 'cv-btn cv-btn--sm';
       exportSvgBtn.textContent = 'Exporter SVG';
-      exportSvgBtn.addEventListener('click', async () => {
-        if (!canvasHandle) return;
-        try {
-          await ensureExportDirectoryPermission();
-          const blob = await canvasHandle.exportSvgBlob();
-          const stem = toSafeFileStem(titleInput.value.trim() || currentWb.title);
-          const result = await saveArchiveBlob(blob, `${stem}.svg`, {
-            pickerTypes: [{ description: 'Image SVG', accept: { 'image/svg+xml': ['.svg'] } }],
-          });
-          if (!result.saved) return;
-          notify({ status: 'success', title: 'Export SVG prêt', text: `${stem}.svg` });
-        } catch {
-          notify({
-            status: 'danger',
-            title: 'Échec de l’export SVG',
-            text: 'Impossible de générer le fichier SVG.',
-          });
-        }
-      });
+      exportSvgBtn.addEventListener(
+        'click',
+        () => void exportCanvas(() => titleInput.value.trim() || currentWb.title, 'svg'),
+      );
 
       const exportPngBtn = document.createElement('button');
       exportPngBtn.type = 'button';
       exportPngBtn.id = 'btn-export-wb-png';
       exportPngBtn.className = 'cv-btn cv-btn--sm';
       exportPngBtn.textContent = 'Exporter PNG';
-      exportPngBtn.addEventListener('click', async () => {
-        if (!canvasHandle) return;
-        try {
-          await ensureExportDirectoryPermission();
-          const blob = await canvasHandle.exportPngBlob();
-          const stem = toSafeFileStem(titleInput.value.trim() || currentWb.title);
-          const result = await saveArchiveBlob(blob, `${stem}.png`, {
-            pickerTypes: [{ description: 'Image PNG', accept: { 'image/png': ['.png'] } }],
-          });
-          if (!result.saved) return;
-          notify({ status: 'success', title: 'Export PNG prêt', text: `${stem}.png` });
-        } catch {
-          notify({
-            status: 'danger',
-            title: 'Échec de l’export PNG',
-            text: 'Impossible de générer l’image PNG.',
-          });
-        }
-      });
+      exportPngBtn.addEventListener(
+        'click',
+        () => void exportCanvas(() => titleInput.value.trim() || currentWb.title, 'png'),
+      );
 
       const archiveBtn = document.createElement('button');
       archiveBtn.type = 'button';
@@ -721,7 +897,11 @@ export function renderWhiteboardView({
           if (snapshot.elements.length > 0) {
             const confirmed = await confirmAction({
               title: `Appliquer le modèle « ${tpl.name} » ?`,
-              message: 'Les éléments actuels du tableau blanc seront remplacés par ceux du modèle.',
+              message:
+                'Les éléments actuels du tableau blanc seront remplacéspar ceux du modèle.'.replace(
+                  'remplacéspar',
+                  'remplacés par',
+                ),
               confirmLabel: 'Appliquer le modèle',
             });
             if (!confirmed) return;
@@ -784,7 +964,15 @@ export function renderWhiteboardView({
         },
       });
 
-      actions.append(openDialogBtn, exportSvgBtn, exportPngBtn, archiveBtn, deleteBtn, saveBtn);
+      actions.append(
+        consultBtn,
+        openDialogBtn,
+        exportSvgBtn,
+        exportPngBtn,
+        archiveBtn,
+        deleteBtn,
+        saveBtn,
+      );
       footer.append(statusEl, actions);
       editorCard.append(metaRow, linkEditor.element, canvasHost, footer, wbTemplatePicker.element);
     }

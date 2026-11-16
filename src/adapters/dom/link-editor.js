@@ -18,7 +18,7 @@ const KIND_META = {
 
 /**
  * Create a local-reference linker component for Tasks, Notes, and Whiteboards.
- * Displays outgoing links (editable), incoming backlinks (read-only navigation),
+ * Displays outgoing links (editable unless `viewOnly`), incoming backlinks (read-only navigation),
  * and a grouped target selector filtered against archived items and terminal tasks.
  *
  * @param {{
@@ -27,6 +27,7 @@ const KIND_META = {
  *   currentRef: LocalRef | null;
  *   initialLinks?: readonly LocalRef[];
  *   readOnly: boolean;
+ *   viewOnly?: boolean;
  *   sourceTerminal?: boolean;
  *   onChange?: (links: readonly LocalRef[]) => void;
  *   onNavigate?: (ref: LocalRef) => void;
@@ -44,6 +45,7 @@ export function createLinkEditor({
   currentRef,
   initialLinks = [],
   readOnly,
+  viewOnly = false,
   sourceTerminal = false,
   onChange,
   onNavigate,
@@ -53,11 +55,15 @@ export function createLinkEditor({
   let terminalLocked = Boolean(sourceTerminal);
 
   const wrapper = document.createElement('div');
-  wrapper.className = 'cv-field lc-links-field';
+  wrapper.className = viewOnly
+    ? 'cv-field lc-links-field lc-links-field--readonly'
+    : 'cv-field lc-links-field';
 
-  const label = document.createElement('label');
+  const label = document.createElement(viewOnly ? 'span' : 'label');
   label.className = 'cv-label';
-  label.htmlFor = `${idPrefix}-select`;
+  if (!viewOnly && label instanceof HTMLLabelElement) {
+    label.htmlFor = `${idPrefix}-select`;
+  }
   label.textContent = 'Éléments liés';
 
   const outgoingList = document.createElement('div');
@@ -145,7 +151,7 @@ export function createLinkEditor({
       chip.append(archBadge);
     }
 
-    if (removable && !readOnly) {
+    if (removable && !readOnly && !viewOnly) {
       const removeBtn = document.createElement('button');
       removeBtn.type = 'button';
       removeBtn.className = 'lc-tag-chip__remove';
@@ -167,6 +173,7 @@ export function createLinkEditor({
   }
 
   function renderSelectOptions() {
+    if (viewOnly) return;
     const linkedKeys = new Set(links.map((r) => `${r.kind}:${r.id}`));
     if (currentRef) linkedKeys.add(`${currentRef.kind}:${currentRef.id}`);
 
@@ -228,11 +235,19 @@ export function createLinkEditor({
 
     outgoingList.replaceChildren();
     if (resolved.outgoing.length === 0) {
-      outgoingList.hidden = true;
+      if (viewOnly && resolved.incoming.length === 0) {
+        outgoingList.hidden = false;
+        const emptyMsg = document.createElement('span');
+        emptyMsg.className = 'cv-caption';
+        emptyMsg.textContent = 'Aucun élément lié.';
+        outgoingList.append(emptyMsg);
+      } else {
+        outgoingList.hidden = true;
+      }
     } else {
       outgoingList.hidden = false;
       for (const entry of resolved.outgoing) {
-        outgoingList.append(makeLinkPill(entry, true));
+        outgoingList.append(makeLinkPill(entry, !viewOnly));
       }
     }
 
@@ -254,25 +269,31 @@ export function createLinkEditor({
     renderSelectOptions();
   }
 
-  addBtn.addEventListener('click', () => {
-    if (readOnly || terminalLocked || !select.value) return;
-    const colonIdx = select.value.indexOf(':');
-    if (colonIdx === -1) return;
-    const kind = /** @type {LocalEntityKind} */ (select.value.slice(0, colonIdx));
-    const id = select.value.slice(colonIdx + 1);
-    const next = [...normalizeLocalRefs([...links, { kind, id }], currentRef)];
-    const changed = next.length !== links.length;
-    links = next;
-    render();
-    if (changed) {
-      onChange?.([...links]);
-    }
-  });
+  if (!viewOnly) {
+    addBtn.addEventListener('click', () => {
+      if (readOnly || terminalLocked || !select.value) return;
+      const colonIdx = select.value.indexOf(':');
+      if (colonIdx === -1) return;
+      const kind = /** @type {LocalEntityKind} */ (select.value.slice(0, colonIdx));
+      const id = select.value.slice(colonIdx + 1);
+      const next = [...normalizeLocalRefs([...links, { kind, id }], currentRef)];
+      const changed = next.length !== links.length;
+      links = next;
+      render();
+      if (changed) {
+        onChange?.([...links]);
+      }
+    });
+  }
 
   render();
 
-  addRow.append(select, addBtn);
-  wrapper.append(label, outgoingList, backlinksWrap, addRow, terminalHint);
+  if (viewOnly) {
+    wrapper.append(label, outgoingList, backlinksWrap);
+  } else {
+    addRow.append(select, addBtn);
+    wrapper.append(label, outgoingList, backlinksWrap, addRow, terminalHint);
+  }
 
   return {
     element: wrapper,

@@ -187,29 +187,29 @@ test.describe('AppShell Covenant & accessibilité (Étape 1)', () => {
     await cmdInput.press('Enter');
     await expect(page.locator('#topbar-title')).toHaveText('Tâches');
 
-    // Ouvrir la tâche directement via Ctrl+K en cherchant un mot de sa description
+    // Ouvrir la tâche directement via Ctrl+K en cherchant un mot de sa description (mode Consultation)
     await page.keyboard.press('Control+k');
     await cmdInput.fill('detaillee');
     await expect(page.locator('#cmd-list [data-value^="open:task:"]')).toBeVisible();
     await cmdInput.press('Enter');
     await expect(page.locator('#drawer-task')).toBeVisible();
-    await expect(page.locator('#task-title-input')).toHaveValue('Tâche Palette');
+    await expect(page.locator('#task-consult-view')).toContainText('Tâche Palette');
     await page.locator('#drawer-task [data-cv-close]').first().click();
 
-    // Ouvrir la note directement via Ctrl+K en cherchant un mot de son contenu
+    // Ouvrir la note directement via Ctrl+K en cherchant un mot de son contenu (mode Consultation)
     await page.keyboard.press('Control+k');
     await cmdInput.fill('architecture');
     await expect(page.locator('#cmd-list [data-value^="open:note:"]')).toBeVisible();
     await cmdInput.press('Enter');
     await expect(page.locator('#topbar-title')).toHaveText('Notes');
-    await expect(page.locator('#note-title-input')).toHaveValue('Note Palette');
+    await expect(page.locator('#note-consult-title')).toHaveText('Note Palette');
 
-    // Ouvrir le tableau blanc directement via Ctrl+K
+    // Ouvrir le tableau blanc directement via Ctrl+K (mode Consultation)
     await page.keyboard.press('Control+k');
     await cmdInput.fill('Tableau Palette');
     await expect(page.locator('#cmd-list [data-value^="open:whiteboard:"]')).toBeVisible();
     await cmdInput.press('Enter');
     await expect(page.locator('#topbar-title')).toHaveText('Tableaux blancs');
-    await expect(page.locator('#whiteboard-title-input')).toHaveValue('Tableau Palette');
+    await expect(page.locator('#whiteboard-consult-title')).toHaveText('Tableau Palette');
   });
 });

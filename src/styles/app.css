@@ -417,6 +417,20 @@ dialog::backdrop {
   gap: var(--cv-space-2);
 }
 
+.lc-note-row {
+  display: flex;
+  align-items: stretch;
+  gap: var(--cv-space-1);
+  min-width: 0;
+}
+
+.lc-note-row__edit {
+  flex: 0 0 auto;
+  align-self: center;
+  min-width: var(--cv-target-min);
+  min-height: var(--cv-target-min);
+}
+
 .lc-note-item {
   display: flex;
   flex-direction: column;
@@ -439,6 +453,13 @@ dialog::backdrop {
   border-color: var(--cv-border-strong);
 }
 
+.lc-note-row .lc-note-item {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.lc-note-row.is-active .lc-note-item,
 .lc-note-item[aria-current='true'] {
   background: var(--cv-surface-2);
   border-color: var(--cv-accent-500);
@@ -2249,4 +2270,137 @@ dialog::backdrop {
   .lc-filters-bar .cv-field {
     max-width: none;
   }
+}
+
+/* Consultation mode (read-only panels & dialogs) */
+.lc-consult-panel,
+.lc-consult-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cv-space-4);
+  min-width: 0;
+}
+
+.lc-consult-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cv-space-2);
+  min-width: 0;
+  flex: 1 1 14rem;
+}
+
+.lc-consult-title {
+  margin: 0;
+  font-size: var(--cv-text-lg, 1.125rem);
+  font-weight: var(--cv-weight-semibold);
+  line-height: var(--cv-leading-snug);
+  color: var(--cv-fg);
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+
+.lc-consult-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cv-space-2);
+}
+
+.lc-consult-checklist {
+  list-style: none;
+  margin: 0;
+  padding: var(--cv-space-3);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-radius-md);
+  background: var(--cv-surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--cv-space-2);
+}
+
+.lc-consult-checklist__item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--cv-space-2);
+  font-size: var(--cv-text-sm);
+  color: var(--cv-fg);
+  min-width: 0;
+}
+
+.lc-consult-checklist__item .cv-icon {
+  flex: 0 0 auto;
+  margin-top: 0.125rem;
+  color: var(--cv-fg-muted);
+}
+
+.lc-consult-checklist__item.is-done .cv-icon {
+  color: var(--cv-fg-success);
+}
+
+.lc-consult-checklist__item.is-done .lc-consult-checklist__text {
+  color: var(--cv-fg-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--cv-fg-subtle);
+}
+
+.lc-consult-checklist__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.lc-editor-readonly-wrap {
+  min-width: 0;
+}
+
+.lc-editor-readonly-wrap .lc-editor {
+  border-color: var(--cv-border);
+  background: var(--cv-surface-2);
+}
+
+.lc-editor-readonly-wrap .lc-editor:focus-within {
+  outline: none;
+  border-color: var(--cv-border-strong);
+}
+
+.lc-editor-readonly-wrap .lc-editor__surface {
+  min-height: 0;
+  max-height: none;
+}
+
+.lc-editor-readonly-wrap .lc-editor__surface .ProseMirror {
+  min-height: 0;
+}
+
+.lc-editor-readonly-wrap .lc-editor__surface .ProseMirror:focus-visible {
+  outline: 2px solid var(--cv-border-focus);
+  outline-offset: 2px;
+  border-radius: var(--cv-radius-sm);
+}
+
+.lc-editor-readonly-wrap .lc-editor__surface .ProseMirror ul[data-type='taskList'] li > label {
+  pointer-events: none;
+  cursor: default;
+}
+
+.lc-editor-readonly-wrap
+  .lc-editor__surface
+  .ProseMirror
+  ul[data-type='taskList']
+  li
+  > label
+  > input[type='checkbox'] {
+  cursor: default;
+}
+
+.lc-tags-field--readonly,
+.lc-links-field--readonly {
+  margin-bottom: 0;
+}
+
+.lc-cal-edit-btn {
+  min-width: var(--cv-target-min);
+  min-height: var(--cv-target-min);
+  padding: 0 var(--cv-space-1);
 }

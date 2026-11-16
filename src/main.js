@@ -235,6 +235,16 @@ async function bootstrap() {
     anchorDate: getTodayIsoDate(),
     focusTaskId: null,
   };
+  /** @type {{ noteId: string | null; mode: 'view' | 'edit' }} */
+  const notesUiState = {
+    noteId: store.getState().preferences.selectedNoteId ?? null,
+    mode: 'view',
+  };
+  /** @type {{ whiteboardId: string | null; mode: 'view' | 'edit' }} */
+  const whiteboardsUiState = {
+    whiteboardId: store.getState().preferences.selectedWhiteboardId ?? null,
+    mode: 'view',
+  };
 
   /** @type {{ flushAndDestroy: () => void; isDispatchingInline: () => boolean } | null} */
   let notesViewHandle = null;
@@ -284,7 +294,7 @@ async function bootstrap() {
         store.dispatch({ type: 'select_project', projectId: target.projectId });
       }
       store.dispatch({ type: 'set_view', view: 'tasks' });
-      handleOpenTaskDrawer(target);
+      handleOpenTaskDrawer(target, { mode: 'view' });
       return;
     }
     if (ref.kind === 'note') {
@@ -302,6 +312,8 @@ async function bootstrap() {
       notesFilters.projectId = 'all';
       notesFilters.query = '';
       notesFilters.tag = 'all';
+      notesUiState.noteId = target.id;
+      notesUiState.mode = 'view';
       store.dispatch({ type: 'select_note', noteId: target.id });
       store.dispatch({ type: 'set_view', view: 'notes' });
       return;
@@ -320,6 +332,8 @@ async function bootstrap() {
       }
       whiteboardsFilters.projectId = 'all';
       whiteboardsFilters.query = '';
+      whiteboardsUiState.whiteboardId = target.id;
+      whiteboardsUiState.mode = 'view';
       store.dispatch({ type: 'select_whiteboard', whiteboardId: target.id });
       store.dispatch({ type: 'set_view', view: 'whiteboards' });
     }
@@ -327,17 +341,21 @@ async function bootstrap() {
 
   /**
    * @param {Task} [task]
-   * @param {TaskStatus | null} [defaultStatus]
-   * @param {string | null} [defaultDueDate]
-   * @param {string | null} [defaultDueTime]
+   * @param {{
+   *   defaultStatus?: TaskStatus | null;
+   *   defaultDueDate?: string | null;
+   *   defaultDueTime?: string | null;
+   *   mode?: 'view' | 'edit';
+   * }} [opts]
    */
-  function handleOpenTaskDrawer(task, defaultStatus, defaultDueDate, defaultDueTime) {
+  function handleOpenTaskDrawer(task, opts = {}) {
     openTaskDrawer({
       store,
       task,
-      defaultStatus,
-      defaultDueDate,
-      defaultDueTime,
+      mode: opts.mode,
+      defaultStatus: opts.defaultStatus,
+      defaultDueDate: opts.defaultDueDate,
+      defaultDueTime: opts.defaultDueTime,
       resolveAssetUrl,
       uploadLocalImage,
       onNavigateLocalRef: handleNavigateLocalRef,
@@ -345,12 +363,13 @@ async function bootstrap() {
   }
 
   /**
-   * @param {{ note?: Note; defaultProjectId?: string | null }} [opts]
+   * @param {{ note?: Note; mode?: 'view' | 'edit'; defaultProjectId?: string | null }} [opts]
    */
   function handleOpenNoteDialog(opts = {}) {
     openNoteDialog({
       store,
       note: opts.note,
+      mode: opts.mode,
       defaultProjectId: opts.defaultProjectId,
       resolveAssetUrl,
       uploadLocalImage,
@@ -365,12 +384,13 @@ async function bootstrap() {
   }
 
   /**
-   * @param {{ whiteboard?: Whiteboard; defaultProjectId?: string | null }} [opts]
+   * @param {{ whiteboard?: Whiteboard; mode?: 'view' | 'edit'; defaultProjectId?: string | null }} [opts]
    */
   function handleOpenWhiteboardDialog(opts = {}) {
     openWhiteboardDialog({
       store,
       whiteboard: opts.whiteboard,
+      mode: opts.mode,
       defaultProjectId: opts.defaultProjectId,
       onAfterCreate() {
         if (store.getState().preferences.activeView !== 'whiteboards') {
@@ -410,18 +430,22 @@ async function bootstrap() {
       renderTodayView({
         container: rootView,
         store,
-        onOpenTask: (task) => handleOpenTaskDrawer(task),
-        onOpenNote(note) {
+        onOpenTask: (task, mode = 'view') => handleOpenTaskDrawer(task, { mode }),
+        onOpenNote(note, mode = 'view') {
           flushActiveViewHandles();
           notesFilters.projectId = 'all';
           notesFilters.query = '';
+          notesUiState.noteId = note.id;
+          notesUiState.mode = store.getState().readOnly ? 'view' : mode;
           store.dispatch({ type: 'select_note', noteId: note.id });
           store.dispatch({ type: 'set_view', view: 'notes' });
         },
-        onOpenWhiteboard(wb) {
+        onOpenWhiteboard(wb, mode = 'view') {
           flushActiveViewHandles();
           whiteboardsFilters.projectId = 'all';
           whiteboardsFilters.query = '';
+          whiteboardsUiState.whiteboardId = wb.id;
+          whiteboardsUiState.mode = store.getState().readOnly ? 'view' : mode;
           store.dispatch({ type: 'select_whiteboard', whiteboardId: wb.id });
           store.dispatch({ type: 'set_view', view: 'whiteboards' });
         },
@@ -431,10 +455,10 @@ async function bootstrap() {
           if (selectProjects(s).length === 0) {
             openProjectModal({ store });
           } else {
-            handleOpenTaskDrawer(
-              undefined,
-              getDefaultInitialTaskStatusId(s.preferences.taskStatuses),
-            );
+            handleOpenTaskDrawer(undefined, {
+              defaultStatus: getDefaultInitialTaskStatusId(s.preferences.taskStatuses),
+              mode: 'edit',
+            });
           }
         },
         onNewNote() {
@@ -442,6 +466,7 @@ async function bootstrap() {
           if (s.readOnly) return;
           handleOpenNoteDialog({
             defaultProjectId: getActiveSelectedProjectId(s),
+            mode: 'edit',
           });
         },
         onNewWhiteboard() {
@@ -449,6 +474,7 @@ async function bootstrap() {
           if (s.readOnly) return;
           handleOpenWhiteboardDialog({
             defaultProjectId: getActiveSelectedProjectId(s),
+            mode: 'edit',
           });
         },
       });
@@ -462,12 +488,14 @@ async function bootstrap() {
         onOpenProjectNotes(projectId) {
           notesFilters.projectId = projectId;
           notesFilters.query = '';
+          notesUiState.mode = 'view';
           store.dispatch({ type: 'select_project', projectId });
           store.dispatch({ type: 'set_view', view: 'notes' });
         },
         onOpenProjectWhiteboards(projectId) {
           whiteboardsFilters.projectId = projectId;
           whiteboardsFilters.query = '';
+          whiteboardsUiState.mode = 'view';
           store.dispatch({ type: 'select_project', projectId });
           store.dispatch({ type: 'set_view', view: 'whiteboards' });
         },
@@ -480,14 +508,14 @@ async function bootstrap() {
         container: rootView,
         store,
         calendarState,
-        onOpenTask: (task) => handleOpenTaskDrawer(task),
+        onOpenTask: (task, mode = 'view') => handleOpenTaskDrawer(task, { mode }),
         onNewTask: (defaultDueDate, defaultDueTime) => {
-          handleOpenTaskDrawer(
-            undefined,
-            getDefaultInitialTaskStatusId(store.getState().preferences.taskStatuses),
-            defaultDueDate ?? null,
-            defaultDueTime ?? null,
-          );
+          handleOpenTaskDrawer(undefined, {
+            defaultStatus: getDefaultInitialTaskStatusId(store.getState().preferences.taskStatuses),
+            defaultDueDate: defaultDueDate ?? null,
+            defaultDueTime: defaultDueTime ?? null,
+            mode: 'edit',
+          });
         },
         onOpenNewProject: () => openProjectModal({ store }),
       });
@@ -500,6 +528,7 @@ async function bootstrap() {
         container: rootView,
         store,
         filters: notesFilters,
+        modeState: notesUiState,
         resolveAssetUrl,
         uploadLocalImage,
         onOpenNoteDialog: handleOpenNoteDialog,
@@ -514,6 +543,7 @@ async function bootstrap() {
         container: rootView,
         store,
         filters: whiteboardsFilters,
+        modeState: whiteboardsUiState,
         resolveAssetUrl,
         uploadLocalImage,
         onOpenWhiteboardDialog: handleOpenWhiteboardDialog,
@@ -665,6 +695,22 @@ async function bootstrap() {
       archivesFilters.selectedKey = null;
     }
 
+    if (state.readOnly) {
+      notesUiState.mode = 'view';
+      whiteboardsUiState.mode = 'view';
+    } else if (command.type === 'hydrate' || command.type === 'replace_all') {
+      notesUiState.noteId = state.preferences.selectedNoteId ?? null;
+      notesUiState.mode = 'view';
+      whiteboardsUiState.whiteboardId = state.preferences.selectedWhiteboardId ?? null;
+      whiteboardsUiState.mode = 'view';
+    } else if (command.type === 'create_note') {
+      notesUiState.noteId = command.id;
+      notesUiState.mode = 'edit';
+    } else if (command.type === 'create_whiteboard') {
+      whiteboardsUiState.whiteboardId = command.id;
+      whiteboardsUiState.mode = 'edit';
+    }
+
     if (command.type === 'delete_asset') {
       revokeAssetUrl(command.id);
     } else if (ASSET_MUTATING_COMMANDS.has(command.type) && !state.readOnly) {
@@ -709,6 +755,8 @@ async function bootstrap() {
   wireAppShell({
     onSelectView(/** @type {ActiveView} */ view) {
       flushActiveViewHandles();
+      if (view === 'notes') notesUiState.mode = 'view';
+      if (view === 'whiteboards') whiteboardsUiState.mode = 'view';
       store.dispatch({ type: 'set_view', view });
     },
     getCommandItems() {
@@ -790,7 +838,7 @@ async function bootstrap() {
         if (state.preferences.activeView !== 'tasks') {
           store.dispatch({ type: 'set_view', view: 'tasks' });
         }
-        handleOpenTaskDrawer(task);
+        handleOpenTaskDrawer(task, { mode: 'view' });
         return;
       }
       if (commandId.startsWith('open:note:')) {
@@ -802,6 +850,8 @@ async function bootstrap() {
           notesFilters.projectId = 'all';
         }
         notesFilters.query = '';
+        notesUiState.noteId = note.id;
+        notesUiState.mode = 'view';
         store.dispatch({ type: 'select_note', noteId: note.id });
         store.dispatch({ type: 'set_view', view: 'notes' });
         return;
@@ -818,6 +868,8 @@ async function bootstrap() {
           whiteboardsFilters.projectId = 'all';
         }
         whiteboardsFilters.query = '';
+        whiteboardsUiState.whiteboardId = wb.id;
+        whiteboardsUiState.mode = 'view';
         store.dispatch({ type: 'select_whiteboard', whiteboardId: wb.id });
         store.dispatch({ type: 'set_view', view: 'whiteboards' });
         return;
@@ -842,10 +894,12 @@ async function bootstrap() {
           break;
         case 'view:notes':
           flushActiveViewHandles();
+          notesUiState.mode = 'view';
           store.dispatch({ type: 'set_view', view: 'notes' });
           break;
         case 'view:whiteboards':
           flushActiveViewHandles();
+          whiteboardsUiState.mode = 'view';
           store.dispatch({ type: 'set_view', view: 'whiteboards' });
           break;
         case 'view:archives':
@@ -857,10 +911,10 @@ async function bootstrap() {
           if (selectProjects(state).length === 0) {
             openProjectModal({ store });
           } else {
-            handleOpenTaskDrawer(
-              undefined,
-              getDefaultInitialTaskStatusId(state.preferences.taskStatuses),
-            );
+            handleOpenTaskDrawer(undefined, {
+              defaultStatus: getDefaultInitialTaskStatusId(state.preferences.taskStatuses),
+              mode: 'edit',
+            });
           }
           break;
         case 'action:new-project':
@@ -869,12 +923,16 @@ async function bootstrap() {
           break;
         case 'action:new-note':
           if (state.readOnly) return;
-          handleOpenNoteDialog({ defaultProjectId: getActiveSelectedProjectId(state) });
+          handleOpenNoteDialog({
+            defaultProjectId: getActiveSelectedProjectId(state),
+            mode: 'edit',
+          });
           break;
         case 'action:new-whiteboard':
           if (state.readOnly) return;
           handleOpenWhiteboardDialog({
             defaultProjectId: getActiveSelectedProjectId(state),
+            mode: 'edit',
           });
           break;
         case 'action:open-statuses':

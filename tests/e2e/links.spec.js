@@ -48,8 +48,9 @@ test.describe('Références locales internes tâches, notes & tableaux blancs (T
     await expect(page.locator('#task-links-list')).toContainText('Schéma Flux');
     await page.locator('#drawer-task button[type="submit"]').click();
 
-    // Rouvrir la tâche et naviguer directement vers la note liée
+    // Rouvrir la tâche en consultation et naviguer directement vers la note liée
     await page.getByRole('button', { name: 'Développer connecteur', exact: true }).click();
+    await expect(page.locator('#task-consult-view')).toBeVisible();
     await expect(page.locator('#task-links-list')).toContainText('Cahier des charges');
 
     // Audit axe-core sur le tiroir avec liens
@@ -64,9 +65,12 @@ test.describe('Références locales internes tâches, notes & tableaux blancs (T
       .click();
 
     await expect(page.locator('#topbar-title')).toHaveText('Notes');
-    await expect(page.locator('#note-title-input')).toHaveValue('Cahier des charges');
-    // Rétrolien visible dans la note + navigation vers le tableau blanc
+    await expect(page.locator('#note-consult-title')).toHaveText('Cahier des charges');
+    // Rétrolien visible dès la consultation + passage en modification pour ajouter un lien
     await expect(page.locator('#note-links-backlinks')).toContainText('Développer connecteur');
+
+    await page.locator('#btn-switch-note-edit').click();
+    await expect(page.locator('#note-title-input')).toHaveValue('Cahier des charges');
 
     const noteLinkSelect = page.locator('#note-links-select');
     const wbFromNote = await noteLinkSelect
@@ -76,21 +80,22 @@ test.describe('Références locales internes tâches, notes & tableaux blancs (T
     await page.locator('#note-links-add').click();
     await expect(page.locator('#note-links-list')).toContainText('Schéma Flux');
 
-    // Naviguer vers le tableau blanc depuis la note
+    // Naviguer vers le tableau blanc depuis la note (ouvre en consultation)
     await page
       .locator('#note-links-list')
       .getByRole('button', { name: /Ouvrir tableau « Schéma Flux »/ })
       .click();
     await expect(page.locator('#topbar-title')).toHaveText('Tableaux blancs');
-    await expect(page.locator('#whiteboard-title-input')).toHaveValue('Schéma Flux');
+    await expect(page.locator('#whiteboard-consult-title')).toHaveText('Schéma Flux');
     await expect(page.locator('#whiteboard-links-backlinks')).toContainText(
       'Développer connecteur',
     );
     await expect(page.locator('#whiteboard-links-backlinks')).toContainText('Cahier des charges');
 
-    // Persistance après rechargement
+    // Persistance après rechargement (retour en consultation)
     await page.reload();
     await expect(page.locator('#topbar-title')).toHaveText('Tableaux blancs');
+    await expect(page.locator('#whiteboard-consult-title')).toHaveText('Schéma Flux');
     await expect(page.locator('#whiteboard-links-backlinks')).toContainText(
       'Développer connecteur',
     );

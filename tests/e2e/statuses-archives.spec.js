@@ -61,8 +61,10 @@ test.describe('Statuts initiaux/terminaux, garde de liens et archivage complet',
       page.locator('[data-kanban-status="valide"] [data-status-role="terminal"]'),
     ).toHaveText('Terminal');
 
-    // Passer "Tâche Initiale" vers le statut terminal "Validé" depuis son tiroir
+    // Passer "Tâche Initiale" vers le statut terminal "Validé" depuis son tiroir (consultation -> modification)
     await page.getByRole('button', { name: 'Tâche Initiale', exact: true }).click();
+    await expect(page.locator('#task-consult-view')).toBeVisible();
+    await page.locator('#btn-switch-task-edit').click();
     await page.locator('#task-status-select').selectOption('valide');
     await expect(page.locator('#task-status-role-badge')).toHaveText('Terminal');
     await expect(page.locator('#task-links-select')).toBeDisabled();
@@ -74,15 +76,17 @@ test.describe('Statuts initiaux/terminaux, garde de liens et archivage complet',
 
     // Tâche Seconde ne doit plus pouvoir sélectionner "Tâche Initiale" (désormais terminale) comme cible
     await page.getByRole('button', { name: 'Tâche Seconde', exact: true }).click();
+    await expect(page.locator('#task-consult-view')).toBeVisible();
+    await page.locator('#btn-switch-task-edit').click();
     await expect(page.locator('#task-links-select')).not.toContainText('Tâche Initiale');
     await page.locator('#drawer-task [data-cv-close]').first().click();
 
-    // La note ne doit pas non plus proposer "Tâche Initiale" dans son sélecteur de liens
+    // La note affiche le rétrolien historique en consultation et exclut "Tâche Initiale" en modification
     await page.locator('[data-nav-view="notes"]').click();
-    await expect(page.locator('#note-links-select')).not.toContainText('Tâche Initiale');
-    // Mais le rétrolien historique reste lisible avec le badge Terminal
     await expect(page.locator('#note-links-backlinks')).toContainText('Tâche Initiale');
     await expect(page.locator('#note-links-backlinks')).toContainText('Terminal');
+    await page.locator('#btn-switch-note-edit').click();
+    await expect(page.locator('#note-links-select')).not.toContainText('Tâche Initiale');
   });
 
   test('archive tâches, notes, tableaux blancs et projets, masque des écrans habituels et filtre dans Archives (WCAG 2.2 AA)', async ({
@@ -123,11 +127,12 @@ test.describe('Statuts initiaux/terminaux, garde de liens et archivage complet',
     await page.locator('#whiteboard-dialog-project-select').selectOption({ label: 'Projet Beta' });
     await page.locator('#dialog-whiteboard button[type="submit"]').click();
 
-    // Archiver la note et le tableau blanc directement depuis leurs vues
+    // Archiver la note et le tableau blanc directement depuis leurs vues (passage en modification pour la note)
     await page.locator('#btn-archive-whiteboard').click();
     await expect(page.locator('#whiteboard-title-input')).toHaveCount(0);
 
     await page.locator('[data-nav-view="notes"]').click();
+    await page.locator('#btn-switch-note-edit').click();
     await page.locator('#btn-archive-note').click();
     await expect(page.locator('#note-title-input')).toHaveCount(0);
 

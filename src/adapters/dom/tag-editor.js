@@ -2,8 +2,8 @@ import { normalizeTags, parseTagsInput } from '../../core/model.js';
 import { initTooltips, setTooltip } from './tooltip.js';
 
 /**
- * Create an accessible tag editor widget with removable chips, datalist autocomplete,
- * IME-safe Enter/comma submission, and a pending-input commit helper on form submit.
+ * Create an accessible tag editor (or pure view-only tag display) widget.
+ * When `viewOnly` is true, renders only read-only tag pills without any input controls.
  *
  * @param {{
  *   idPrefix: string;
@@ -11,6 +11,7 @@ import { initTooltips, setTooltip } from './tooltip.js';
  *   initialTags?: readonly string[];
  *   suggestions?: readonly string[];
  *   readOnly: boolean;
+ *   viewOnly?: boolean;
  *   onChange?: (tags: readonly string[]) => void;
  * }} opts
  * @returns {{
@@ -26,6 +27,7 @@ export function createTagEditor({
   initialTags = [],
   suggestions = [],
   readOnly,
+  viewOnly = false,
   onChange,
 }) {
   /** @type {string[]} */
@@ -33,11 +35,15 @@ export function createTagEditor({
   let composing = false;
 
   const wrapper = document.createElement('div');
-  wrapper.className = 'cv-field lc-tags-field';
+  wrapper.className = viewOnly
+    ? 'cv-field lc-tags-field lc-tags-field--readonly'
+    : 'cv-field lc-tags-field';
 
-  const label = document.createElement('label');
+  const label = document.createElement(viewOnly ? 'span' : 'label');
   label.className = 'cv-label';
-  label.htmlFor = `${idPrefix}-input`;
+  if (!viewOnly && label instanceof HTMLLabelElement) {
+    label.htmlFor = `${idPrefix}-input`;
+  }
   label.textContent = labelText;
 
   const chipsBox = document.createElement('div');
@@ -69,6 +75,7 @@ export function createTagEditor({
   addBtn.textContent = 'Ajouter l’étiquette';
 
   function refreshDatalist() {
+    if (viewOnly) return;
     const activeLower = new Set(tags.map((t) => t.toLowerCase()));
     datalist.replaceChildren();
     for (const s of suggestions) {
@@ -83,7 +90,15 @@ export function createTagEditor({
   function renderChips() {
     chipsBox.replaceChildren();
     if (tags.length === 0) {
-      chipsBox.hidden = true;
+      if (viewOnly) {
+        chipsBox.hidden = false;
+        const emptyMsg = document.createElement('span');
+        emptyMsg.className = 'cv-caption';
+        emptyMsg.textContent = 'Aucune étiquette.';
+        chipsBox.append(emptyMsg);
+      } else {
+        chipsBox.hidden = true;
+      }
     } else {
       chipsBox.hidden = false;
       for (const tag of tags) {
@@ -95,7 +110,7 @@ export function createTagEditor({
         txt.textContent = `#${tag}`;
         chip.append(txt);
 
-        if (!readOnly) {
+        if (!readOnly && !viewOnly) {
           const removeBtn = document.createElement('button');
           removeBtn.type = 'button';
           removeBtn.className = 'lc-tag-chip__remove';
@@ -126,6 +141,7 @@ export function createTagEditor({
    * @returns {readonly string[]}
    */
   function commitPending(emitChange = true) {
+    if (viewOnly) return [...tags];
     const raw = input.value.trim();
     if (!raw) return [...tags];
     const parsed = parseTagsInput(raw);
@@ -142,39 +158,45 @@ export function createTagEditor({
     return [...tags];
   }
 
-  input.addEventListener('compositionstart', () => {
-    composing = true;
-  });
-  input.addEventListener('compositionend', () => {
-    composing = false;
-  });
-  input.addEventListener('keydown', (event) => {
-    if (composing || readOnly) return;
-    if (event.key === 'Enter' || event.key === ',') {
-      if (input.value.trim()) {
-        event.preventDefault();
-        commitPending(true);
-      } else if (event.key === ',') {
-        event.preventDefault();
+  if (!viewOnly) {
+    input.addEventListener('compositionstart', () => {
+      composing = true;
+    });
+    input.addEventListener('compositionend', () => {
+      composing = false;
+    });
+    input.addEventListener('keydown', (event) => {
+      if (composing || readOnly) return;
+      if (event.key === 'Enter' || event.key === ',') {
+        if (input.value.trim()) {
+          event.preventDefault();
+          commitPending(true);
+        } else if (event.key === ',') {
+          event.preventDefault();
+        }
       }
-    }
-  });
-  input.addEventListener('blur', () => {
-    if (!readOnly && input.value.trim()) {
+    });
+    input.addEventListener('blur', () => {
+      if (!readOnly && input.value.trim()) {
+        commitPending(true);
+      }
+    });
+    addBtn.addEventListener('click', () => {
+      if (readOnly) return;
       commitPending(true);
-    }
-  });
-  addBtn.addEventListener('click', () => {
-    if (readOnly) return;
-    commitPending(true);
-    input.focus();
-  });
+      input.focus();
+    });
+  }
 
   renderChips();
   refreshDatalist();
 
-  inputRow.append(input, addBtn);
-  wrapper.append(label, chipsBox, inputRow, datalist);
+  if (viewOnly) {
+    wrapper.append(label, chipsBox);
+  } else {
+    inputRow.append(input, addBtn);
+    wrapper.append(label, chipsBox, inputRow, datalist);
+  }
 
   return {
     element: wrapper,

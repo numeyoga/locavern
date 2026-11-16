@@ -57,14 +57,14 @@ test.describe('Notes enrichies Tiptap & images locales (Étape 5)', () => {
     await expect(page.locator('.cv-toast-region')).toContainText('Image distante bloquée');
     expect(externalRequests).toEqual([]);
 
-    // Enregistrer explicitement, attendre la fin de l’écriture IndexedDB puis recharger
+    // Enregistrer explicitement, attendre la fin de l’écriture IndexedDB puis recharger (ouvre en consultation)
     await page.locator('#btn-save-note').click();
     await expect(page.locator('.cv-toast-region')).toContainText('Note enregistrée');
     await expect(page.locator('html')).not.toHaveAttribute('data-persisting', 'true');
     await page.reload();
 
     await expect(page.locator('#topbar-title')).toHaveText('Notes');
-    await expect(page.locator('#note-title-input')).toHaveValue('Note architecture');
+    await expect(page.locator('#note-consult-title')).toHaveText('Note architecture');
     await expect(page.locator('.lc-editor__surface .ProseMirror')).toContainText('Contenu local');
     await expect(page.locator('.lc-editor__surface img[data-asset-id]')).toHaveAttribute(
       'src',
@@ -92,13 +92,15 @@ test.describe('Notes enrichies Tiptap & images locales (Étape 5)', () => {
       .getByRole('button', { name: 'Importer et remplacer' })
       .click();
 
-    await expect(page.locator('#note-title-input')).toHaveValue('Note architecture');
+    await expect(page.locator('#note-consult-title')).toHaveText('Note architecture');
     await expect(page.locator('.lc-editor__surface img[data-asset-id]')).toHaveAttribute(
       'src',
       /^blob:/,
     );
 
-    // Supprimer la note -> placée en corbeille locale, puis vidage définitif purge l’image d’IndexedDB
+    // Passer en modification pour supprimer la note -> placée en corbeille locale, puis vidage définitif purge l’image d’IndexedDB
+    await page.locator('#btn-switch-note-edit').click();
+    await expect(page.locator('#note-title-input')).toHaveValue('Note architecture');
     await page.locator('#btn-delete-note').click();
     await page.locator('#modal-confirm').getByRole('button', { name: 'Supprimer la note' }).click();
     await expect(page.getByText('Aucune note disponible')).toBeVisible();

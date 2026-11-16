@@ -1,5 +1,6 @@
 /** @import { AppCommand, AppState, Project, StoreEffect } from '../../types.d.ts' */
 
+import { formatShortDateFr } from '../../core/dates.js';
 import { selectProjects } from '../../core/store.js';
 import {
   applyDialogPresentation,
@@ -10,16 +11,25 @@ import {
 } from './app-shell.js';
 
 /**
- * Open the Covenant dialog (modal or drawer per user preference) to create or edit a project.
+ * Open the Covenant dialog (modal or drawer per user preference) to consult, create, or edit a project.
  * @param {{
  *   store: {
  *     getState: () => AppState;
  *     dispatch: (cmd: AppCommand) => { state: AppState; effects: StoreEffect[] };
  *   };
  *   project?: Project;
+ *   mode?: 'view' | 'edit';
+ *   onOpenProjectNotes?: (projectId: string) => void;
+ *   onOpenProjectWhiteboards?: (projectId: string) => void;
  * }} opts
  */
-export function openProjectModal({ store, project }) {
+export function openProjectModal({
+  store,
+  project,
+  mode,
+  onOpenProjectNotes,
+  onOpenProjectWhiteboards,
+}) {
   const modal = /** @type {HTMLDialogElement | null} */ (document.getElementById('modal-project'));
   const titleEl = document.getElementById('modal-project-title');
   const bodyEl = document.getElementById('modal-project-body');
@@ -29,6 +39,149 @@ export function openProjectModal({ store, project }) {
   const state = store.getState();
   const readOnly = state.readOnly;
   applyDialogPresentation(modal, state.preferences.inputPresentations.projects);
+
+  const isExisting = Boolean(project);
+  const effectiveMode = !isExisting ? 'edit' : readOnly ? 'view' : (mode ?? 'view');
+
+  if (effectiveMode === 'view' && project) {
+    titleEl.textContent = 'Consulter le projet';
+
+    const panel = document.createElement('div');
+    panel.id = 'project-consult-view';
+    panel.className = 'lc-consult-panel';
+
+    const headRow = document.createElement('div');
+    headRow.className = 'lc-consult-head';
+
+    const projHeading = document.createElement('h3');
+    projHeading.className = 'lc-consult-title';
+    projHeading.textContent = project.name;
+
+    const badge = document.createElement('span');
+    badge.className = project.archived ? 'cv-badge cv-badge--warning' : 'cv-badge cv-badge--accent';
+    const dot = document.createElement('span');
+    dot.className = 'cv-badge__dot';
+    badge.append(dot, document.createTextNode(project.archived ? 'Archivé' : 'Actif'));
+    headRow.append(projHeading, badge);
+
+    const taskCount = state.tasks.filter((t) => t.projectId === project.id && !t.archived).length;
+    const noteCount = state.notes.filter((n) => n.projectId === project.id && !n.archived).length;
+    const wbCount = state.whiteboards.filter(
+      (w) => w.projectId === project.id && !w.archived,
+    ).length;
+
+    const meta = document.createElement('dl');
+    meta.className = 'lc-archive-meta';
+
+    /** @param {string} label @param {string} val */
+    const addRow = (label, val) => {
+      const row = document.createElement('div');
+      row.className = 'lc-archive-meta__row';
+      const dt = document.createElement('dt');
+      dt.textContent = label;
+      const dd = document.createElement('dd');
+      dd.textContent = val;
+      row.append(dt, dd);
+      meta.append(row);
+    };
+
+    addRow('Description', project.description || 'Aucune description.');
+    addRow(
+      'Éléments actifs',
+      `${taskCount} tâche${taskCount > 1 ? 's' : ''} · ${noteCount} note${noteCount > 1 ? 's' : ''} · ${wbCount} tableau${wbCount > 1 ? 'x' : ''} blanc${wbCount > 1 ? 's' : ''}`,
+    );
+    addRow('Mise à jour', formatShortDateFr(project.updatedAt.slice(0, 10), true));
+
+    const quickNav = document.createElement('div');
+    quickNav.className = 'lc-consult-actions';
+
+    const tasksBtn = document.createElement('button');
+    tasksBtn.type = 'button';
+    tasksBtn.className = 'cv-btn cv-btn--sm';
+    tasksBtn.textContent = 'Ouvrir les tâches';
+    tasksBtn.addEventListener('click', () => {
+      closeDialogById('modal-project');
+      store.dispatch({ type: 'select_project', projectId: project.id });
+      store.dispatch({ type: 'set_view', view: 'tasks' });
+    });
+
+    const notesBtn = document.createElement('button');
+    notesBtn.type = 'button';
+    notesBtn.className = 'cv-btn cv-btn--sm';
+    notesBtn.textContent = 'Ouvrir les notes';
+    notesBtn.addEventListener('click', () => {
+      closeDialogById('modal-project');
+      if (onOpenProjectNotes) {
+        onOpenProjectNotes(project.id);
+        return;
+      }
+      store.dispatch({ type: 'select_project', projectId: project.id });
+      store.dispatch({ type: 'set_view', view: 'notes' });
+    });
+
+    const wbBtn = document.createElement('button');
+    wbBtn.type = 'button';
+    wbBtn.className = 'cv-btn cv-btn--sm';
+    wbBtn.textContent = 'Ouvrir les tableaux blancs';
+    wbBtn.addEventListener('click', () => {
+      closeDialogById('modal-project');
+      if (onOpenProjectWhiteboards) {
+        onOpenProjectWhiteboards(project.id);
+        return;
+      }
+      store.dispatch({ type: 'select_project', projectId: project.id });
+      store.dispatch({ type: 'set_view', view: 'whiteboards' });
+    });
+
+    quickNav.append(tasksBtn, notesBtn, wbBtn);
+    panel.append(headRow, meta, quickNav);
+    bodyEl.replaceChildren(panel);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'cv-btn';
+    closeBtn.setAttribute('data-cv-close', '');
+    closeBtn.textContent = 'Fermer';
+
+    /** @type {HTMLElement[]} */
+    const footerBtns = [closeBtn];
+    if (!readOnly) {
+      const switchEditBtn = document.createElement('button');
+      switchEditBtn.type = 'button';
+      switchEditBtn.id = 'btn-switch-project-edit';
+      switchEditBtn.className = 'cv-btn cv-btn--primary';
+      const editIc = document.createElement('i');
+      editIc.className = 'ph ph-pencil-simple cv-icon';
+      editIc.setAttribute('aria-hidden', 'true');
+      switchEditBtn.append(editIc, document.createTextNode(' Modifier'));
+      switchEditBtn.addEventListener('click', () => {
+        const fresh = store.getState().projects.find((p) => p.id === project.id) ?? project;
+        openProjectModal({
+          store,
+          project: fresh,
+          mode: 'edit',
+          onOpenProjectNotes,
+          onOpenProjectWhiteboards,
+        });
+      });
+      footerBtns.push(switchEditBtn);
+    }
+    footerEl.replaceChildren(...footerBtns);
+
+    const onClose = () => {
+      modal.returnValue = '';
+      bodyEl.replaceChildren();
+      footerEl.replaceChildren();
+      modal.removeEventListener('close', onClose);
+    };
+    modal.addEventListener('close', onClose);
+
+    if (!modal.open) {
+      openDialogById('modal-project');
+    }
+    closeBtn.focus();
+    return;
+  }
 
   const isEdit = Boolean(project);
   titleEl.textContent = isEdit ? 'Modifier le projet' : 'Nouveau projet';
@@ -107,7 +260,29 @@ export function openProjectModal({ store, project }) {
   saveBtn.disabled = readOnly;
   saveBtn.textContent = isEdit ? 'Enregistrer' : 'Créer le projet';
 
-  footerEl.replaceChildren(cancelBtn, saveBtn);
+  /** @type {HTMLElement[]} */
+  const footerButtons = [];
+  if (isEdit && project) {
+    const consultBtn = document.createElement('button');
+    consultBtn.type = 'button';
+    consultBtn.id = 'btn-switch-project-view';
+    consultBtn.className = 'cv-btn';
+    consultBtn.style.marginRight = 'auto';
+    consultBtn.textContent = 'Consulter';
+    consultBtn.addEventListener('click', () => {
+      const fresh = store.getState().projects.find((p) => p.id === project.id) ?? project;
+      openProjectModal({
+        store,
+        project: fresh,
+        mode: 'view',
+        onOpenProjectNotes,
+        onOpenProjectWhiteboards,
+      });
+    });
+    footerButtons.push(consultBtn);
+  }
+  footerButtons.push(cancelBtn, saveBtn);
+  footerEl.replaceChildren(...footerButtons);
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -150,11 +325,15 @@ export function openProjectModal({ store, project }) {
 
   const onClose = () => {
     modal.returnValue = '';
+    bodyEl.replaceChildren();
+    footerEl.replaceChildren();
     modal.removeEventListener('close', onClose);
   };
   modal.addEventListener('close', onClose);
 
-  openDialogById('modal-project');
+  if (!modal.open) {
+    openDialogById('modal-project');
+  }
   nameInput.focus();
 }
 
@@ -200,7 +379,9 @@ export function renderProjectsView({
   plusIcon.className = 'ph ph-plus cv-icon';
   plusIcon.setAttribute('aria-hidden', 'true');
   newBtn.append(plusIcon, document.createTextNode(' Nouveau projet'));
-  newBtn.addEventListener('click', () => openProjectModal({ store }));
+  newBtn.addEventListener('click', () =>
+    openProjectModal({ store, onOpenProjectNotes, onOpenProjectWhiteboards }),
+  );
 
   header.append(leftGroup, newBtn);
 
@@ -228,7 +409,9 @@ export function renderProjectsView({
     cta.className = 'cv-btn cv-btn--primary';
     cta.disabled = state.readOnly;
     cta.textContent = 'Créer un projet';
-    cta.addEventListener('click', () => openProjectModal({ store }));
+    cta.addEventListener('click', () =>
+      openProjectModal({ store, onOpenProjectNotes, onOpenProjectWhiteboards }),
+    );
 
     empty.append(iconBox, title, desc, cta);
     container.replaceChildren(header, empty);
@@ -269,7 +452,9 @@ export function renderProjectsView({
     cta.className = 'cv-btn cv-btn--primary';
     cta.disabled = state.readOnly;
     cta.textContent = 'Créer un projet';
-    cta.addEventListener('click', () => openProjectModal({ store }));
+    cta.addEventListener('click', () =>
+      openProjectModal({ store, onOpenProjectNotes, onOpenProjectWhiteboards }),
+    );
 
     emptyActions.append(archivesBtn, cta);
     empty.append(iconBox, title, desc, emptyActions);
@@ -362,13 +547,36 @@ export function renderProjectsView({
     const actionsGroup = document.createElement('div');
     actionsGroup.className = 'lc-project-card__actions';
 
+    const consultBtn = document.createElement('button');
+    consultBtn.type = 'button';
+    consultBtn.className = 'cv-btn cv-btn--ghost cv-btn--sm';
+    consultBtn.textContent = 'Consulter';
+    consultBtn.setAttribute('aria-label', `Consulter ${project.name}`);
+    consultBtn.addEventListener('click', () =>
+      openProjectModal({
+        store,
+        project,
+        mode: 'view',
+        onOpenProjectNotes,
+        onOpenProjectWhiteboards,
+      }),
+    );
+
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
     editBtn.className = 'cv-btn cv-btn--ghost cv-btn--sm';
     editBtn.disabled = state.readOnly;
     editBtn.textContent = 'Modifier';
     editBtn.setAttribute('aria-label', `Modifier ${project.name}`);
-    editBtn.addEventListener('click', () => openProjectModal({ store, project }));
+    editBtn.addEventListener('click', () =>
+      openProjectModal({
+        store,
+        project,
+        mode: 'edit',
+        onOpenProjectNotes,
+        onOpenProjectWhiteboards,
+      }),
+    );
 
     const archiveBtn = document.createElement('button');
     archiveBtn.type = 'button';
@@ -413,7 +621,7 @@ export function renderProjectsView({
       notify({ status: 'info', title: 'Projet placé dans la corbeille', text: project.name });
     });
 
-    actionsGroup.append(editBtn, archiveBtn, deleteBtn);
+    actionsGroup.append(consultBtn, editBtn, archiveBtn, deleteBtn);
     footer.append(openGroup, actionsGroup);
 
     card.append(cardHead, desc, meta, footer);

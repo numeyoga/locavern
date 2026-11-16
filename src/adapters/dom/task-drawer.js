@@ -1,6 +1,6 @@
 /** @import { AppCommand, AppState, ChecklistItem, LocalRef, RichTextDoc, StoreEffect, Task, TaskPriority, TaskRecurrence, TaskStatus } from '../../types.d.ts' */
 
-import { isOffHoursDueTime } from '../../core/dates.js';
+import { formatShortDateFr, isOffHoursDueTime } from '../../core/dates.js';
 import {
   EMPTY_RICH_DOC,
   TASK_RECURRENCES,
@@ -13,9 +13,11 @@ import {
   normalizeDueTime,
   normalizeTaskRecurrence,
 } from '../../core/model.js';
+import { extractRichTextPlainText } from '../../core/search.js';
 import {
   selectAllTags,
   selectOrphanedAssetIds,
+  selectProjectById,
   selectProjects,
   selectTemplates,
 } from '../../core/store.js';
@@ -33,14 +35,34 @@ import {
   openDialogById,
 } from './app-shell.js';
 
+/** @type {Readonly<Record<TaskPriority, { label: string; badgeClass: string }>>} */
+const PRIORITY_META = {
+  low: { label: 'Basse', badgeClass: 'cv-badge' },
+  medium: { label: 'Moyenne', badgeClass: 'cv-badge cv-badge--warning' },
+  high: { label: 'Haute', badgeClass: 'cv-badge cv-badge--danger' },
+};
+
+/** @type {(() => void) | null} */
+let activeTaskCleanup = null;
+
 /**
- * Open the Covenant dialog (drawer or modal per user preference) to create or edit a task.
+ * Check whether a rich text document has meaningful visible text or local images.
+ * @param {RichTextDoc} doc
+ * @returns {boolean}
+ */
+function hasRichTextContent(doc) {
+  return extractRichTextPlainText(doc).length > 0 || collectDocAssetIds(doc).length > 0;
+}
+
+/**
+ * Open the Covenant dialog (drawer or modal per user preference) to consult, create, or edit a task.
  * @param {{
  *   store: {
  *     getState: () => AppState;
  *     dispatch: (cmd: AppCommand) => { state: AppState; effects: StoreEffect[] };
  *   };
  *   task?: Task;
+ *   mode?: 'view' | 'edit';
  *   defaultProjectId?: string | null;
  *   defaultStatus?: TaskStatus | null;
  *   defaultDueDate?: string | null;
@@ -50,28 +72,292 @@ import {
  *   onNavigateLocalRef?: (ref: LocalRef) => void;
  * }} opts
  */
-export function openTaskDrawer({
-  store,
-  task,
-  defaultProjectId = null,
-  defaultStatus,
-  defaultDueDate = null,
-  defaultDueTime = null,
-  resolveAssetUrl,
-  uploadLocalImage,
-  onNavigateLocalRef,
-}) {
+export function openTaskDrawer(opts) {
+  const {
+    store,
+    task,
+    mode,
+    defaultProjectId = null,
+    defaultStatus,
+    defaultDueDate = null,
+    defaultDueTime = null,
+    resolveAssetUrl,
+    uploadLocalImage,
+    onNavigateLocalRef,
+  } = opts;
+
   const drawer = /** @type {HTMLDialogElement | null} */ (document.getElementById('drawer-task'));
   const titleEl = document.getElementById('drawer-task-title');
   const bodyEl = document.getElementById('drawer-task-body');
   const footerEl = document.getElementById('drawer-task-footer');
   if (!drawer || !titleEl || !bodyEl || !footerEl) return;
 
+  activeTaskCleanup?.();
+  activeTaskCleanup = null;
+
   const state = store.getState();
   applyDialogPresentation(drawer, state.preferences.inputPresentations.tasks);
   const isEdit = Boolean(task);
   const readOnly = state.readOnly;
-  titleEl.textContent = isEdit ? 'Détails de la tâche' : 'Nouvelle tâche';
+  const effectiveMode = !isEdit ? 'edit' : readOnly ? 'view' : (mode ?? 'view');
+
+  if (effectiveMode === 'view' && task) {
+    titleEl.textContent = 'Consulter la tâche';
+
+    const panel = document.createElement('div');
+    panel.id = 'task-consult-view';
+    panel.className = 'lc-consult-panel';
+
+    const configuredStatuses = state.preferences.taskStatuses;
+    const statusMeta = getTaskStatusMeta(task.status, configuredStatuses);
+    const statusRole = getTaskStatusRole(task.status, configuredStatuses);
+    const prioInfo = PRIORITY_META[task.priority];
+
+    const headRow = document.createElement('div');
+    headRow.className = 'lc-consult-head';
+
+    const titleHeading = document.createElement('h3');
+    titleHeading.className = 'lc-consult-title';
+    titleHeading.textContent = task.title;
+
+    const badgesRow = document.createElement('div');
+    badgesRow.className = 'lc-archive-inline-badges';
+
+    const statusBadge = document.createElement('span');
+    statusBadge.className = statusMeta.badgeClass;
+    statusBadge.textContent = statusMeta.label;
+    badgesRow.append(statusBadge);
+
+    if (statusRole === 'initial' || statusRole === 'terminal') {
+      const roleBadge = document.createElement('span');
+      roleBadge.className =
+        statusRole === 'terminal' ? 'cv-badge cv-badge--success' : 'cv-badge cv-badge--accent';
+      roleBadge.dataset.statusRole = statusRole;
+      roleBadge.textContent = statusRole === 'terminal' ? 'Terminal' : 'Initial';
+      badgesRow.append(roleBadge);
+    }
+
+    const prioBadge = document.createElement('span');
+    prioBadge.className = prioInfo.badgeClass;
+    prioBadge.textContent = prioInfo.label;
+    badgesRow.append(prioBadge);
+
+    if (task.archived) {
+      const archBadge = document.createElement('span');
+      archBadge.className = 'cv-badge';
+      archBadge.textContent = 'Archivée';
+      badgesRow.append(archBadge);
+    }
+
+    headRow.append(titleHeading, badgesRow);
+
+    const metaList = document.createElement('dl');
+    metaList.className = 'lc-archive-meta';
+
+    /** @param {string} labelText @param {string | HTMLElement} value */
+    const addMetaRow = (labelText, value) => {
+      const row = document.createElement('div');
+      row.className = 'lc-archive-meta__row';
+      const dt = document.createElement('dt');
+      dt.textContent = labelText;
+      const dd = document.createElement('dd');
+      if (typeof value === 'string') {
+        dd.textContent = value;
+      } else {
+        dd.append(value);
+      }
+      row.append(dt, dd);
+      metaList.append(row);
+    };
+
+    const proj = selectProjectById(state, task.projectId);
+    addMetaRow(
+      'Projet',
+      proj ? (proj.archived ? `${proj.name} (archivé)` : proj.name) : 'Sans projet',
+    );
+
+    if (task.dueDate) {
+      const dueVal = document.createElement('span');
+      dueVal.className = 'lc-archive-inline-badges';
+      dueVal.append(
+        document.createTextNode(
+          `${formatShortDateFr(task.dueDate, true)}${task.dueTime ? ` à ${task.dueTime}` : ''}`,
+        ),
+      );
+      if (isOffHoursDueTime(task.dueTime)) {
+        const offBadge = document.createElement('span');
+        offBadge.className = 'cv-badge lc-offhours-pill';
+        const moonIc = document.createElement('i');
+        moonIc.className = 'ph ph-moon cv-icon';
+        moonIc.setAttribute('aria-hidden', 'true');
+        offBadge.append(moonIc, document.createTextNode(' Créneau 18h–7h'));
+        dueVal.append(offBadge);
+      }
+      addMetaRow('Échéance', dueVal);
+    } else {
+      addMetaRow('Échéance', 'Aucune');
+    }
+
+    addMetaRow('Récurrence', task.recurrence ? getTaskRecurrenceLabel(task.recurrence) : 'Aucune');
+
+    const tagEditor = createTagEditor({
+      idPrefix: 'task-tags',
+      labelText: 'Étiquettes',
+      initialTags: task.tags ?? [],
+      readOnly,
+      viewOnly: true,
+    });
+
+    const linkEditor = createLinkEditor({
+      idPrefix: 'task-links',
+      state,
+      currentRef: { kind: 'task', id: task.id },
+      initialLinks: task.links ?? [],
+      readOnly,
+      viewOnly: true,
+      onNavigate(ref) {
+        closeDialogById('drawer-task');
+        cleanup();
+        onNavigateLocalRef?.(ref);
+      },
+    });
+
+    // Read-only checklist (zero inputs or interactive checkboxes)
+    const checklistField = document.createElement('div');
+    checklistField.className = 'cv-field';
+    const checklistLabel = document.createElement('span');
+    checklistLabel.className = 'cv-label';
+    const checklistItems = task.checklist ?? [];
+    const doneCount = checklistItems.filter((item) => item.done).length;
+    checklistLabel.textContent =
+      checklistItems.length > 0
+        ? `Liste de contrôle (${doneCount}/${checklistItems.length})`
+        : 'Liste de contrôle';
+    checklistField.append(checklistLabel);
+
+    if (checklistItems.length === 0) {
+      const emptyCk = document.createElement('p');
+      emptyCk.className = 'cv-caption';
+      emptyCk.style.margin = '0';
+      emptyCk.textContent = 'Aucune étape.';
+      checklistField.append(emptyCk);
+    } else {
+      const ul = document.createElement('ul');
+      ul.className = 'lc-consult-checklist';
+      for (const item of checklistItems) {
+        const li = document.createElement('li');
+        li.className = item.done
+          ? 'lc-consult-checklist__item is-done'
+          : 'lc-consult-checklist__item';
+        const ic = document.createElement('i');
+        ic.className = item.done ? 'ph ph-check-square cv-icon' : 'ph ph-square cv-icon';
+        ic.setAttribute('aria-hidden', 'true');
+        const sr = document.createElement('span');
+        sr.className = 'lc-sr-only';
+        sr.textContent = item.done ? 'Fait : ' : 'À faire : ';
+        const txt = document.createElement('span');
+        txt.className = 'lc-consult-checklist__text';
+        txt.textContent = item.text;
+        li.append(ic, sr, txt);
+        ul.append(li);
+      }
+      checklistField.append(ul);
+    }
+
+    // Read-only description
+    const descField = document.createElement('div');
+    descField.className = 'cv-field';
+    const descLabel = document.createElement('span');
+    descLabel.className = 'cv-label';
+    descLabel.id = 'task-desc-label';
+    descLabel.textContent = 'Description';
+    descField.append(descLabel);
+
+    /** @type {ReturnType<typeof mountRichTextEditor> | null} */
+    let editorHandle = null;
+    if (hasRichTextContent(task.descriptionDoc)) {
+      const editorHost = document.createElement('div');
+      editorHost.className = 'lc-editor-readonly-wrap';
+      descField.append(editorHost);
+      editorHandle = mountRichTextEditor({
+        container: editorHost,
+        initialDoc: task.descriptionDoc,
+        editable: false,
+        ariaLabel: 'Description de la tâche',
+        resolveAssetUrl,
+        onUploadImage: async () => null,
+        onChange() {},
+      });
+    } else {
+      const emptyDesc = document.createElement('p');
+      emptyDesc.className = 'cv-caption';
+      emptyDesc.style.margin = '0';
+      emptyDesc.textContent = 'Aucune description.';
+      descField.append(emptyDesc);
+    }
+
+    panel.append(
+      headRow,
+      metaList,
+      tagEditor.element,
+      linkEditor.element,
+      checklistField,
+      descField,
+    );
+    bodyEl.replaceChildren(panel);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'cv-btn';
+    closeBtn.setAttribute('data-cv-close', '');
+    closeBtn.textContent = 'Fermer';
+
+    /** @type {HTMLElement[]} */
+    const footerBtns = [closeBtn];
+    if (!readOnly) {
+      const switchEditBtn = document.createElement('button');
+      switchEditBtn.type = 'button';
+      switchEditBtn.id = 'btn-switch-task-edit';
+      switchEditBtn.className = 'cv-btn cv-btn--primary';
+      const editIc = document.createElement('i');
+      editIc.className = 'ph ph-pencil-simple cv-icon';
+      editIc.setAttribute('aria-hidden', 'true');
+      switchEditBtn.append(editIc, document.createTextNode(' Modifier'));
+      switchEditBtn.addEventListener('click', () => {
+        const freshTask = store.getState().tasks.find((t) => t.id === task.id) ?? task;
+        openTaskDrawer({ ...opts, task: freshTask, mode: 'edit' });
+      });
+      footerBtns.push(switchEditBtn);
+    }
+    footerEl.replaceChildren(...footerBtns);
+
+    let cleaned = false;
+    function cleanup() {
+      if (cleaned) return;
+      cleaned = true;
+      if (activeTaskCleanup === cleanup) activeTaskCleanup = null;
+      drawer?.removeEventListener('close', onClose);
+      editorHandle?.destroy();
+      editorHandle = null;
+      if (bodyEl) bodyEl.replaceChildren();
+      if (footerEl) footerEl.replaceChildren();
+    }
+    function onClose() {
+      if (!drawer) return;
+      drawer.returnValue = '';
+      cleanup();
+    }
+    activeTaskCleanup = cleanup;
+    drawer.addEventListener('close', onClose);
+
+    if (!drawer.open) {
+      openDialogById('drawer-task');
+    }
+    closeBtn.focus();
+    return;
+  }
+
+  titleEl.textContent = isEdit ? 'Modifier la tâche' : 'Nouvelle tâche';
 
   const form = document.createElement('form');
   form.id = 'form-task-drawer';
@@ -335,7 +621,7 @@ export function openTaskDrawer({
     sourceTerminal: initialTerminal,
     onNavigate(ref) {
       closeDialogById('drawer-task');
-      onClose();
+      cleanup();
       onNavigateLocalRef?.(ref);
     },
   });
@@ -604,7 +890,7 @@ export function openTaskDrawer({
         now: new Date().toISOString(),
       });
       closeDialogById('drawer-task');
-      onClose();
+      cleanup();
       notify({
         status: 'info',
         title: nextArchived ? 'Tâche archivée' : 'Tâche désarchivée',
@@ -612,7 +898,17 @@ export function openTaskDrawer({
       });
     });
 
-    footerButtons.push(deleteBtn, archiveBtn);
+    const consultBtn = document.createElement('button');
+    consultBtn.type = 'button';
+    consultBtn.id = 'btn-switch-task-view';
+    consultBtn.className = 'cv-btn';
+    consultBtn.textContent = 'Consulter';
+    consultBtn.addEventListener('click', () => {
+      const freshTask = store.getState().tasks.find((t) => t.id === task.id) ?? task;
+      openTaskDrawer({ ...opts, task: freshTask, mode: 'view' });
+    });
+
+    footerButtons.push(deleteBtn, archiveBtn, consultBtn);
   }
   footerButtons.push(cancelBtn, saveBtn);
   footerEl.replaceChildren(...footerButtons);
@@ -729,14 +1025,15 @@ export function openTaskDrawer({
     }
     stagedAssetIds.clear();
     closeDialogById('drawer-task');
-    onClose();
+    cleanup();
   });
 
   let closed = false;
-  const onClose = () => {
+  function cleanup() {
     if (closed) return;
     closed = true;
-    drawer.returnValue = '';
+    if (activeTaskCleanup === cleanup) activeTaskCleanup = null;
+    drawer?.removeEventListener('close', onClose);
     if (stagedAssetIds.size > 0 && !store.getState().readOnly) {
       const orphanedStaged = selectOrphanedAssetIds(store.getState(), stagedAssetIds);
       for (const id of orphanedStaged) {
@@ -745,12 +1042,19 @@ export function openTaskDrawer({
       stagedAssetIds.clear();
     }
     editorHandle.destroy();
-    bodyEl.replaceChildren();
-    footerEl.replaceChildren();
-    drawer.removeEventListener('close', onClose);
-  };
+    if (bodyEl) bodyEl.replaceChildren();
+    if (footerEl) footerEl.replaceChildren();
+  }
+  function onClose() {
+    if (!drawer) return;
+    drawer.returnValue = '';
+    cleanup();
+  }
+  activeTaskCleanup = cleanup;
   drawer.addEventListener('close', onClose);
 
-  openDialogById('drawer-task');
+  if (!drawer.open) {
+    openDialogById('drawer-task');
+  }
   titleInput.focus();
 }

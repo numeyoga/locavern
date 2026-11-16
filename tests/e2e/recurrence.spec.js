@@ -53,7 +53,7 @@ test.describe('Tâches récurrentes & génération de l’occurrence suivante', 
     await expect(nextRow.locator('[data-recurrence-badge="weekly"]')).toBeVisible();
 
     // Vérifier que la checklist de la nouvelle occurrence est réinitialisée (décochée)
-    await nextRow.getByRole('button', { name: /Ouvrir « Revue hebdomadaire »/ }).click();
+    await nextRow.getByRole('button', { name: /Modifier « Revue hebdomadaire »/ }).click();
     await expect(page.locator('#drawer-task')).toBeVisible();
     await expect(page.locator('#task-recurrence-select')).toHaveValue('weekly');
     await expect(page.locator('.lc-checklist__row input[type="checkbox"]')).not.toBeChecked();

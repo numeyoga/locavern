@@ -813,7 +813,11 @@ export function mountWhiteboardCanvas({
   svg.append(defs, worldGroup);
   stage.append(svg);
 
-  root.append(toolbar, textEditorBar, stage, announcer, fileInput);
+  if (editable) {
+    root.append(toolbar, textEditorBar, stage, announcer, fileInput);
+  } else {
+    root.append(toolbar, stage, announcer);
+  }
   container.replaceChildren(root);
   initTooltips(toolbar);
 

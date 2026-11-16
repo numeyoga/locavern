@@ -172,7 +172,7 @@ test.describe('Tableaux blancs SVG, persistance IndexedDB & accessibilité WCAG 
 
     await page.reload();
     await expect(page.locator('#topbar-title')).toHaveText('Tableaux blancs');
-    await expect(page.locator('#whiteboard-title-input')).toHaveValue('Schéma architecture');
+    await expect(page.locator('#whiteboard-consult-title')).toHaveText('Schéma architecture');
 
     const restoredSticky = page.locator('.lc-wb-el[data-el-type="sticky"]').first();
     await expect(restoredSticky).toContainText('Idée locale');
@@ -367,9 +367,12 @@ test.describe('Tableaux blancs SVG, persistance IndexedDB & accessibilité WCAG 
     await expect(restoredArrow).toHaveAttribute('data-end-bound', String(rectId));
     expect(Number(await restoredArrow.getAttribute('data-w'))).toBe(arrowUpdatedW);
 
-    // Sélectionner la flèche et détacher la poignée de fin vers le vide
-    await restoredArrow.focus();
-    const endHandle = restoredArrow.locator('[data-wb-arrow-handle="end"]');
+    // Passer en modification puis sélectionner la flèche et détacher la poignée de fin vers le vide
+    await expect(page.locator('#whiteboard-consult-title')).toHaveText('Schéma flèches aimantées');
+    await page.locator('#btn-switch-wb-edit').click();
+    const editArrow = page.locator('.lc-wb-el[data-el-type="arrow"]').first();
+    await editArrow.focus();
+    const endHandle = editArrow.locator('[data-wb-arrow-handle="end"]');
     await expect(endHandle).toBeVisible();
     const handleBox = await endHandle.boundingBox();
     expect(handleBox).not.toBeNull();
@@ -379,8 +382,8 @@ test.describe('Tableaux blancs SVG, persistance IndexedDB & accessibilité WCAG 
       await page.mouse.move(svgBox.x + 300, svgBox.y + 320);
       await page.mouse.up();
     }
-    await expect(restoredArrow).not.toHaveAttribute('data-end-bound', String(rectId));
-    await expect(restoredArrow).toHaveAttribute('data-start-bound', String(stickyId));
+    await expect(editArrow).not.toHaveAttribute('data-end-bound', String(rectId));
+    await expect(editArrow).toHaveAttribute('data-start-bound', String(stickyId));
 
     const axeResults = await new AxeBuilder({ page })
       .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])

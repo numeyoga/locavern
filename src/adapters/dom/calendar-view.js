@@ -48,7 +48,7 @@ let draggedTaskId = null;
  *     anchorDate: string;
  *     focusTaskId: string | null;
  *   };
- *   onOpenTask: (task: Task) => void;
+ *   onOpenTask: (task: Task, mode?: 'view' | 'edit') => void;
  *   onNewTask: (defaultDueDate?: string | null, defaultDueTime?: string | null) => void;
  *   onOpenNewProject: () => void;
  * }} opts
@@ -521,7 +521,7 @@ export function renderCalendarView({
     const prioMeta = PRIORITY_META[task.priority];
     openBtn.setAttribute(
       'aria-label',
-      `${task.title} · Priorité ${prioMeta.label} · ${statusMeta.label}${task.dueDate ? ` · ${task.dueDate}` : ''}${task.dueTime ? ` à ${task.dueTime}` : ''}${offHours ? ' (créneau 18h–7h)' : ''}`,
+      `Consulter ${task.title} · Priorité ${prioMeta.label} · ${statusMeta.label}${task.dueDate ? ` · ${task.dueDate}` : ''}${task.dueTime ? ` à ${task.dueTime}` : ''}${offHours ? ' (créneau 18h–7h)' : ''}`,
     );
 
     if (task.dueTime) {
@@ -557,7 +557,7 @@ export function renderCalendarView({
       openBtn.append(metaEl);
     }
 
-    openBtn.addEventListener('click', () => onOpenTask(task));
+    openBtn.addEventListener('click', () => onOpenTask(task, 'view'));
     openBtn.addEventListener('keydown', (event) => {
       if (readOnly || !task.dueDate) return;
       if (!event.altKey && !event.shiftKey) return;
@@ -574,33 +574,48 @@ export function renderCalendarView({
 
     item.append(openBtn);
 
-    if (!readOnly && task.dueDate) {
-      const dueDate = task.dueDate;
-      const shiftGroup = document.createElement('div');
-      shiftGroup.className = 'lc-cal-task__actions';
+    if (!readOnly) {
+      const actionsGroup = document.createElement('div');
+      actionsGroup.className = 'lc-cal-task__actions';
 
-      const minusBtn = document.createElement('button');
-      minusBtn.type = 'button';
-      minusBtn.className = 'cv-btn cv-btn--ghost cv-btn--sm lc-cal-shift-btn';
-      minusBtn.setAttribute('aria-label', `Avancer « ${task.title} » d’un jour`);
-      minusBtn.textContent = '−1 j';
-      setTooltip(minusBtn, 'Avancer d’un jour');
-      minusBtn.addEventListener('click', () =>
-        moveTaskToSchedule(task.id, shiftIsoDate(dueDate, -1)),
-      );
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'cv-btn cv-btn--ghost cv-btn--icon cv-btn--sm lc-cal-edit-btn';
+      editBtn.setAttribute('aria-label', `Modifier « ${task.title} »`);
+      setTooltip(editBtn, 'Modifier');
+      const editIc = document.createElement('i');
+      editIc.className = 'ph ph-pencil-simple cv-icon';
+      editIc.setAttribute('aria-hidden', 'true');
+      editBtn.append(editIc);
+      editBtn.addEventListener('click', () => onOpenTask(task, 'edit'));
+      actionsGroup.append(editBtn);
 
-      const plusBtn = document.createElement('button');
-      plusBtn.type = 'button';
-      plusBtn.className = 'cv-btn cv-btn--ghost cv-btn--sm lc-cal-shift-btn';
-      plusBtn.setAttribute('aria-label', `Reporter « ${task.title} » d’un jour`);
-      plusBtn.textContent = '+1 j';
-      setTooltip(plusBtn, 'Reporter d’un jour');
-      plusBtn.addEventListener('click', () =>
-        moveTaskToSchedule(task.id, shiftIsoDate(dueDate, 1)),
-      );
+      if (task.dueDate) {
+        const dueDate = task.dueDate;
+        const minusBtn = document.createElement('button');
+        minusBtn.type = 'button';
+        minusBtn.className = 'cv-btn cv-btn--ghost cv-btn--sm lc-cal-shift-btn';
+        minusBtn.setAttribute('aria-label', `Avancer « ${task.title} » d’un jour`);
+        minusBtn.textContent = '−1 j';
+        setTooltip(minusBtn, 'Avancer d’un jour');
+        minusBtn.addEventListener('click', () =>
+          moveTaskToSchedule(task.id, shiftIsoDate(dueDate, -1)),
+        );
 
-      shiftGroup.append(minusBtn, plusBtn);
-      item.append(shiftGroup);
+        const plusBtn = document.createElement('button');
+        plusBtn.type = 'button';
+        plusBtn.className = 'cv-btn cv-btn--ghost cv-btn--sm lc-cal-shift-btn';
+        plusBtn.setAttribute('aria-label', `Reporter « ${task.title} » d’un jour`);
+        plusBtn.textContent = '+1 j';
+        setTooltip(plusBtn, 'Reporter d’un jour');
+        plusBtn.addEventListener('click', () =>
+          moveTaskToSchedule(task.id, shiftIsoDate(dueDate, 1)),
+        );
+
+        actionsGroup.append(minusBtn, plusBtn);
+      }
+
+      item.append(actionsGroup);
     }
 
     return item;
@@ -895,17 +910,28 @@ export function renderCalendarView({
       openBtn.type = 'button';
       openBtn.className = 'cv-btn cv-btn--sm';
       openBtn.textContent = task.title;
-      openBtn.addEventListener('click', () => onOpenTask(task));
+      openBtn.addEventListener('click', () => onOpenTask(task, 'view'));
       chip.append(openBtn);
 
       if (!readOnly) {
+        const editBtn = document.createElement('button');
+        editBtn.type = 'button';
+        editBtn.className = 'cv-btn cv-btn--ghost cv-btn--icon cv-btn--sm';
+        editBtn.setAttribute('aria-label', `Modifier « ${task.title} »`);
+        setTooltip(editBtn, 'Modifier');
+        const editIc = document.createElement('i');
+        editIc.className = 'ph ph-pencil-simple cv-icon';
+        editIc.setAttribute('aria-hidden', 'true');
+        editBtn.append(editIc);
+        editBtn.addEventListener('click', () => onOpenTask(task, 'edit'));
+
         const planTodayBtn = document.createElement('button');
         planTodayBtn.type = 'button';
         planTodayBtn.className = 'cv-btn cv-btn--ghost cv-btn--sm';
         planTodayBtn.setAttribute('aria-label', `Planifier « ${task.title} » aujourd’hui`);
         planTodayBtn.textContent = 'Planifier aujourd’hui';
         planTodayBtn.addEventListener('click', () => moveTaskToSchedule(task.id, todayIso));
-        chip.append(planTodayBtn);
+        chip.append(editBtn, planTodayBtn);
       }
 
       undatedList.append(chip);

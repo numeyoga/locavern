@@ -15,7 +15,7 @@ import {
   selectUnmappedKanbanTasks,
 } from '../../core/store.js';
 import { confirmAction, initCovenant, notify } from './app-shell.js';
-import { setTooltip } from './tooltip.js';
+import { initTooltips, setTooltip } from './tooltip.js';
 import { openStatusModal } from './status-modal.js';
 import { createTaskWorkspaceHeader } from './task-workspace-header.js';
 
@@ -41,7 +41,7 @@ const PRIORITY_META = {
  *     tag: string | 'all';
  *   };
  *   onOpenNewProject: () => void;
- *   onOpenTaskDrawer: (task?: Task, defaultStatus?: TaskStatus | null) => void;
+ *   onOpenTaskDrawer: (task?: Task, opts?: { defaultStatus?: TaskStatus | null; mode?: 'view' | 'edit' }) => void;
  * }} opts
  */
 export function renderKanbanView({
@@ -58,7 +58,8 @@ export function renderKanbanView({
   const header = createTaskWorkspaceHeader({
     state,
     dispatch: store.dispatch,
-    onOpenNewTask: () => onOpenTaskDrawer(undefined, initialDefaultStatus),
+    onOpenNewTask: () =>
+      onOpenTaskDrawer(undefined, { defaultStatus: initialDefaultStatus, mode: 'edit' }),
   });
 
   if (activeProjects.length === 0) {
@@ -327,7 +328,7 @@ export function renderKanbanView({
         openBtn.type = 'button';
         openBtn.className = 'lc-row-title-btn';
         openBtn.textContent = task.title;
-        openBtn.addEventListener('click', () => onOpenTaskDrawer(task));
+        openBtn.addEventListener('click', () => onOpenTaskDrawer(task, { mode: 'view' }));
 
         const badge = document.createElement('span');
         badge.className = meta.badgeClass;
@@ -338,6 +339,20 @@ export function renderKanbanView({
         badge.append(bIc, document.createTextNode(` ${meta.label}`));
 
         info.append(openBtn, badge);
+
+        if (!currentState.readOnly) {
+          const editUnmappedBtn = document.createElement('button');
+          editUnmappedBtn.type = 'button';
+          editUnmappedBtn.className = 'cv-btn cv-btn--ghost cv-btn--icon cv-btn--sm';
+          editUnmappedBtn.setAttribute('aria-label', `Modifier « ${task.title} »`);
+          setTooltip(editUnmappedBtn, 'Modifier');
+          const penIc = document.createElement('i');
+          penIc.className = 'ph ph-pencil-simple cv-icon';
+          penIc.setAttribute('aria-hidden', 'true');
+          editUnmappedBtn.append(penIc);
+          editUnmappedBtn.addEventListener('click', () => onOpenTaskDrawer(task, { mode: 'edit' }));
+          info.append(editUnmappedBtn);
+        }
 
         const assignSelect = document.createElement('select');
         assignSelect.className = 'cv-input lc-kanban-unmapped__select';
@@ -447,7 +462,9 @@ export function renderKanbanView({
       addIc.className = 'ph ph-plus cv-icon';
       addIc.setAttribute('aria-hidden', 'true');
       quickAddBtn.append(addIc);
-      quickAddBtn.addEventListener('click', () => onOpenTaskDrawer(undefined, colMeta.id));
+      quickAddBtn.addEventListener('click', () =>
+        onOpenTaskDrawer(undefined, { defaultStatus: colMeta.id, mode: 'edit' }),
+      );
 
       colControls.append(countBadge, quickAddBtn);
       colHead.append(colTitleGroup, colControls);
@@ -658,7 +675,7 @@ export function renderKanbanView({
         titleBtn.type = 'button';
         titleBtn.className = 'lc-kanban__card-title-btn';
         titleBtn.textContent = task.title;
-        titleBtn.addEventListener('click', () => onOpenTaskDrawer(task));
+        titleBtn.addEventListener('click', () => onOpenTaskDrawer(task, { mode: 'view' }));
 
         const menuId = `menu-task-${task.id}`;
         const menuBtn = document.createElement('button');
@@ -696,13 +713,24 @@ export function renderKanbanView({
             item.disabled = true;
           }
           item.textContent = label;
-          item.addEventListener('click', handler);
+          item.addEventListener('click', () => {
+            try {
+              if (menu.matches(':popover-open')) {
+                menu.hidePopover();
+              }
+            } catch {
+              // Ignore when popover API is unavailable or already closed
+            }
+            handler();
+          });
           menu.append(item);
         };
 
-        addMenuItem('Ouvrir les détails', () => onOpenTaskDrawer(task));
+        addMenuItem('Consulter', () => onOpenTaskDrawer(task, { mode: 'view' }));
 
         if (!currentState.readOnly) {
+          addMenuItem('Modifier', () => onOpenTaskDrawer(task, { mode: 'edit' }));
+
           const sep1 = document.createElement('hr');
           sep1.className = 'cv-menu__sep';
           menu.append(sep1);
@@ -868,6 +896,7 @@ export function renderKanbanView({
       boardSlot.replaceChildren(board);
     }
     initCovenant(boardSlot);
+    initTooltips(boardSlot);
   }
 
   searchInput.addEventListener('input', () => {

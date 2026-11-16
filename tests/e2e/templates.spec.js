@@ -81,10 +81,12 @@ test.describe('Modèles locaux réutilisables (checklists, trames de notes, cane
     await page.locator('#wb-tpl-save-confirm').click();
     await expect(page.locator('.cv-toast-region')).toContainText('Modèle de canevas enregistré');
 
-    // Recharger et vérifier que les 3 modèles personnalisés persistent dans IndexedDB
+    // Recharger et vérifier que les 3 modèles personnalisés persistent dans IndexedDB (bascule en modification)
     await expect(page.locator('html')).not.toHaveAttribute('data-persisting', 'true');
     await page.reload();
     await expect(page.locator('#topbar-title')).toHaveText('Tableaux blancs');
+    await expect(page.locator('#whiteboard-consult-title')).toHaveText('Flux initial');
+    await page.locator('#btn-switch-wb-edit').click();
     await expect(page.locator('#wb-tpl-select')).toContainText('Mon canevas flux');
 
     // Appliquer le modèle de canevas sur un nouveau tableau blanc vide
@@ -122,6 +124,7 @@ test.describe('Modèles locaux réutilisables (checklists, trames de notes, cane
 
     // Vérifier aussi la persistance du modèle de note personnalisé
     await page.locator('[data-nav-view="notes"]').click();
+    await page.locator('#btn-switch-note-edit').click();
     await expect(page.locator('#note-tpl-select')).toContainText('Trame hebdo équipe');
 
     // Audit axe-core clair + sombre + reflow 320 px

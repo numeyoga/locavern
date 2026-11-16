@@ -225,11 +225,16 @@ export function mountRichTextEditor({
       createLocalImageExtension(resolveAssetUrl),
     ],
     editorProps: {
-      attributes: {
-        role: 'textbox',
-        'aria-multiline': 'true',
-        'aria-label': ariaLabel,
-      },
+      attributes: editable
+        ? {
+            role: 'textbox',
+            'aria-multiline': 'true',
+            'aria-label': ariaLabel,
+          }
+        : {
+            role: 'region',
+            'aria-label': ariaLabel,
+          },
       handlePaste(_view, event) {
         if (!editable) return false;
         const dt = event.clipboardData;

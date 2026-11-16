@@ -57,9 +57,9 @@ function createStatCard({ id, label, count, badgeClass = 'cv-badge', icon }) {
  *     getState: () => AppState;
  *     dispatch: (cmd: AppCommand) => { state: AppState; effects: StoreEffect[] };
  *   };
- *   onOpenTask: (task: Task) => void;
- *   onOpenNote: (note: Note) => void;
- *   onOpenWhiteboard: (wb: Whiteboard) => void;
+ *   onOpenTask: (task: Task, mode?: 'view' | 'edit') => void;
+ *   onOpenNote: (note: Note, mode?: 'view' | 'edit') => void;
+ *   onOpenWhiteboard: (wb: Whiteboard, mode?: 'view' | 'edit') => void;
  *   onNewTask: () => void;
  *   onNewNote: () => void;
  *   onNewWhiteboard: () => void;
@@ -225,7 +225,7 @@ export function renderTodayView({
     const mainBtn = document.createElement('button');
     mainBtn.type = 'button';
     mainBtn.className = 'lc-today-item__btn';
-    mainBtn.addEventListener('click', () => onOpenTask(task));
+    mainBtn.addEventListener('click', () => onOpenTask(task, 'view'));
 
     const titleSpan = document.createElement('span');
     titleSpan.className = 'lc-today-item__title';
@@ -281,6 +281,20 @@ export function renderTodayView({
       badge.textContent = rightBadgeLabel;
     }
     side.append(badge);
+
+    if (!state.readOnly) {
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'cv-btn cv-btn--ghost cv-btn--icon cv-btn--sm';
+      editBtn.setAttribute('aria-label', `Modifier « ${task.title} »`);
+      setTooltip(editBtn, 'Modifier');
+      const editIc = document.createElement('i');
+      editIc.className = 'ph ph-pencil-simple cv-icon';
+      editIc.setAttribute('aria-hidden', 'true');
+      editBtn.append(editIc);
+      editBtn.addEventListener('click', () => onOpenTask(task, 'edit'));
+      side.append(editBtn);
+    }
 
     if (showCompleteBtn && terminalStatusId && !state.readOnly) {
       const doneBtn = document.createElement('button');
@@ -423,21 +437,24 @@ export function renderTodayView({
       const li = document.createElement('li');
       li.className = 'lc-today-item';
 
+      /** @param {'view' | 'edit'} mode */
+      const triggerOpen = (mode) => {
+        if (item.kind === 'task') {
+          const found = state.tasks.find((t) => t.id === item.id);
+          if (found) onOpenTask(found, mode);
+        } else if (item.kind === 'note') {
+          const found = state.notes.find((n) => n.id === item.id);
+          if (found) onOpenNote(found, mode);
+        } else {
+          const found = state.whiteboards.find((w) => w.id === item.id);
+          if (found) onOpenWhiteboard(found, mode);
+        }
+      };
+
       const mainBtn = document.createElement('button');
       mainBtn.type = 'button';
       mainBtn.className = 'lc-today-item__btn';
-      mainBtn.addEventListener('click', () => {
-        if (item.kind === 'task') {
-          const found = state.tasks.find((t) => t.id === item.id);
-          if (found) onOpenTask(found);
-        } else if (item.kind === 'note') {
-          const found = state.notes.find((n) => n.id === item.id);
-          if (found) onOpenNote(found);
-        } else {
-          const found = state.whiteboards.find((w) => w.id === item.id);
-          if (found) onOpenWhiteboard(found);
-        }
-      });
+      mainBtn.addEventListener('click', () => triggerOpen('view'));
 
       const ic = document.createElement('i');
       ic.className = `ph ${kindMeta[item.kind].icon} cv-icon`;
@@ -463,6 +480,20 @@ export function renderTodayView({
       kindTag.className = 'cv-badge';
       kindTag.textContent = kindMeta[item.kind].label;
       side.append(kindTag);
+
+      if (!state.readOnly) {
+        const editBtn = document.createElement('button');
+        editBtn.type = 'button';
+        editBtn.className = 'cv-btn cv-btn--ghost cv-btn--icon cv-btn--sm';
+        editBtn.setAttribute('aria-label', `Modifier « ${item.title} »`);
+        setTooltip(editBtn, 'Modifier');
+        const editIc = document.createElement('i');
+        editIc.className = 'ph ph-pencil-simple cv-icon';
+        editIc.setAttribute('aria-hidden', 'true');
+        editBtn.append(editIc);
+        editBtn.addEventListener('click', () => triggerOpen('edit'));
+        side.append(editBtn);
+      }
 
       li.append(mainBtn, side);
       recentSec.list.append(li);

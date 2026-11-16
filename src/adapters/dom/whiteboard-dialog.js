@@ -1,7 +1,8 @@
 /** @import { AppCommand, AppState, StoreEffect, Whiteboard } from '../../types.d.ts' */
 
+import { formatShortDateFr } from '../../core/dates.js';
 import { DEFAULT_WHITEBOARD_VIEWPORT } from '../../core/model.js';
-import { selectProjects, selectTemplates } from '../../core/store.js';
+import { selectProjectById, selectProjects, selectTemplates } from '../../core/store.js';
 import { instantiateWhiteboardTemplate } from '../../core/templates.js';
 import {
   applyDialogPresentation,
@@ -11,24 +12,24 @@ import {
   openDialogById,
 } from './app-shell.js';
 
+/** @type {(() => void) | null} */
+let activeWhiteboardDialogCleanup = null;
+
 /**
- * Open the Covenant dialog (modal or drawer per user preference) to create or edit a whiteboard.
+ * Open the Covenant dialog (drawer or modal per user preference) to consult, create, or edit a whiteboard.
  * @param {{
  *   store: {
  *     getState: () => AppState;
  *     dispatch: (cmd: AppCommand) => { state: AppState; effects: StoreEffect[] };
  *   };
  *   whiteboard?: Whiteboard;
+ *   mode?: 'view' | 'edit';
  *   defaultProjectId?: string | null;
  *   onAfterCreate?: (whiteboardId: string) => void;
  * }} opts
  */
-export function openWhiteboardDialog({
-  store,
-  whiteboard,
-  defaultProjectId = null,
-  onAfterCreate,
-}) {
+export function openWhiteboardDialog(opts) {
+  const { store, whiteboard, mode, defaultProjectId = null, onAfterCreate } = opts;
   const dialog = /** @type {HTMLDialogElement | null} */ (
     document.getElementById('dialog-whiteboard')
   );
@@ -37,10 +38,111 @@ export function openWhiteboardDialog({
   const footerEl = document.getElementById('dialog-whiteboard-footer');
   if (!dialog || !titleEl || !bodyEl || !footerEl) return;
 
+  activeWhiteboardDialogCleanup?.();
+  activeWhiteboardDialogCleanup = null;
+
   const state = store.getState();
   applyDialogPresentation(dialog, state.preferences.inputPresentations.whiteboards);
   const isEdit = Boolean(whiteboard);
   const readOnly = state.readOnly;
+  const effectiveMode = !isEdit ? 'edit' : readOnly ? 'view' : (mode ?? 'view');
+
+  if (effectiveMode === 'view' && whiteboard) {
+    titleEl.textContent = 'Consulter le tableau blanc';
+
+    const panel = document.createElement('div');
+    panel.id = 'whiteboard-consult-view';
+    panel.className = 'lc-consult-panel';
+
+    const headRow = document.createElement('div');
+    headRow.className = 'lc-consult-head';
+
+    const wbHeading = document.createElement('h3');
+    wbHeading.className = 'lc-consult-title';
+    wbHeading.textContent = whiteboard.title;
+    headRow.append(wbHeading);
+
+    if (whiteboard.archived) {
+      const archBadge = document.createElement('span');
+      archBadge.className = 'cv-badge';
+      archBadge.textContent = 'Archivé';
+      headRow.append(archBadge);
+    }
+
+    const meta = document.createElement('dl');
+    meta.className = 'lc-archive-meta';
+    const proj = whiteboard.projectId ? selectProjectById(state, whiteboard.projectId) : null;
+    const elCount = whiteboard.elements.length;
+
+    /** @param {string} label @param {string} val */
+    const addRow = (label, val) => {
+      const row = document.createElement('div');
+      row.className = 'lc-archive-meta__row';
+      const dt = document.createElement('dt');
+      dt.textContent = label;
+      const dd = document.createElement('dd');
+      dd.textContent = val;
+      row.append(dt, dd);
+      meta.append(row);
+    };
+
+    addRow('Projet', proj ? (proj.archived ? `${proj.name} (archivé)` : proj.name) : 'Sans projet');
+    addRow('Éléments', `${elCount} élément${elCount > 1 ? 's' : ''} sur le canevas`);
+    addRow('Mise à jour', formatShortDateFr(whiteboard.updatedAt.slice(0, 10), true));
+
+    panel.append(headRow, meta);
+    bodyEl.replaceChildren(panel);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'cv-btn';
+    closeBtn.setAttribute('data-cv-close', '');
+    closeBtn.textContent = 'Fermer';
+
+    /** @type {HTMLElement[]} */
+    const footerBtns = [closeBtn];
+    if (!readOnly) {
+      const switchEditBtn = document.createElement('button');
+      switchEditBtn.type = 'button';
+      switchEditBtn.id = 'btn-switch-whiteboard-dialog-edit';
+      switchEditBtn.className = 'cv-btn cv-btn--primary';
+      const editIc = document.createElement('i');
+      editIc.className = 'ph ph-pencil-simple cv-icon';
+      editIc.setAttribute('aria-hidden', 'true');
+      switchEditBtn.append(editIc, document.createTextNode(' Modifier'));
+      switchEditBtn.addEventListener('click', () => {
+        const fresh =
+          store.getState().whiteboards.find((w) => w.id === whiteboard.id) ?? whiteboard;
+        openWhiteboardDialog({ ...opts, whiteboard: fresh, mode: 'edit' });
+      });
+      footerBtns.push(switchEditBtn);
+    }
+    footerEl.replaceChildren(...footerBtns);
+
+    let cleaned = false;
+    function cleanup() {
+      if (cleaned) return;
+      cleaned = true;
+      if (activeWhiteboardDialogCleanup === cleanup) activeWhiteboardDialogCleanup = null;
+      dialog?.removeEventListener('close', onClose);
+      if (bodyEl) bodyEl.replaceChildren();
+      if (footerEl) footerEl.replaceChildren();
+    }
+    function onClose() {
+      if (!dialog) return;
+      dialog.returnValue = '';
+      cleanup();
+    }
+    activeWhiteboardDialogCleanup = cleanup;
+    dialog.addEventListener('close', onClose);
+
+    if (!dialog.open) {
+      openDialogById('dialog-whiteboard');
+    }
+    closeBtn.focus();
+    return;
+  }
+
   titleEl.textContent = isEdit ? 'Modifier le tableau blanc' : 'Nouveau tableau blanc';
 
   const form = document.createElement('form');
@@ -212,6 +314,7 @@ export function openWhiteboardDialog({
         now: new Date().toISOString(),
       });
       closeDialogById('dialog-whiteboard');
+      cleanup();
       notify({
         status: 'info',
         title: nextArchived ? 'Tableau blanc archivé' : 'Tableau blanc désarchivé',
@@ -219,7 +322,17 @@ export function openWhiteboardDialog({
       });
     });
 
-    footerButtons.push(deleteBtn, archiveBtn);
+    const consultBtn = document.createElement('button');
+    consultBtn.type = 'button';
+    consultBtn.id = 'btn-switch-whiteboard-dialog-view';
+    consultBtn.className = 'cv-btn';
+    consultBtn.textContent = 'Consulter';
+    consultBtn.addEventListener('click', () => {
+      const fresh = store.getState().whiteboards.find((w) => w.id === whiteboard.id) ?? whiteboard;
+      openWhiteboardDialog({ ...opts, whiteboard: fresh, mode: 'view' });
+    });
+
+    footerButtons.push(deleteBtn, archiveBtn, consultBtn);
   }
   footerButtons.push(cancelBtn, saveBtn);
   footerEl.replaceChildren(...footerButtons);
@@ -278,16 +391,28 @@ export function openWhiteboardDialog({
     }
 
     closeDialogById('dialog-whiteboard');
+    cleanup();
   });
 
-  const onClose = () => {
+  let closed = false;
+  function cleanup() {
+    if (closed) return;
+    closed = true;
+    if (activeWhiteboardDialogCleanup === cleanup) activeWhiteboardDialogCleanup = null;
+    dialog?.removeEventListener('close', onClose);
+    if (bodyEl) bodyEl.replaceChildren();
+    if (footerEl) footerEl.replaceChildren();
+  }
+  function onClose() {
+    if (!dialog) return;
     dialog.returnValue = '';
-    bodyEl.replaceChildren();
-    footerEl.replaceChildren();
-    dialog.removeEventListener('close', onClose);
-  };
+    cleanup();
+  }
+  activeWhiteboardDialogCleanup = cleanup;
   dialog.addEventListener('close', onClose);
 
-  openDialogById('dialog-whiteboard');
+  if (!dialog.open) {
+    openDialogById('dialog-whiteboard');
+  }
   titleInput.focus();
 }
